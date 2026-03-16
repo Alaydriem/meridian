@@ -4,6 +4,7 @@ use std::time::Instant;
 #[derive(Debug, Clone)]
 pub struct ConnectionState {
     pub backend_addr: SocketAddr,
+    #[allow(dead_code)]
     pub instance_id: u16,
     pub last_activity: Instant,
 }

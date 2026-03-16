@@ -63,6 +63,7 @@ impl CryptoReassemblyBuffer {
     }
 
     /// Remove an entry after successful SNI extraction.
+    #[allow(dead_code)]
     pub fn remove(&self, dcid: &[u8]) {
         self.entries.remove(dcid);
     }

@@ -116,9 +116,7 @@ impl QuicInitialDecryptor {
         // Build nonce: packet number left-padded to 12 bytes, XOR with IV
         let mut nonce_bytes = [0u8; 12];
         let pn_bytes = pn.to_be_bytes();
-        for i in 0..4 {
-            nonce_bytes[8 + i] = pn_bytes[i];
-        }
+        nonce_bytes[8..12].copy_from_slice(&pn_bytes);
         for i in 0..12 {
             nonce_bytes[i] ^= iv[i];
         }
@@ -221,9 +219,7 @@ impl QuicInitialDecryptor {
 
         let mut nonce_bytes = [0u8; 12];
         let pn_bytes = pn.to_be_bytes();
-        for i in 0..4 {
-            nonce_bytes[8 + i] = pn_bytes[i];
-        }
+        nonce_bytes[8..12].copy_from_slice(&pn_bytes);
         for i in 0..12 {
             nonce_bytes[i] ^= iv[i];
         }

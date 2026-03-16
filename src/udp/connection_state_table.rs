@@ -30,6 +30,7 @@ impl ConnectionStateTable {
         Some(entry.clone())
     }
 
+    #[allow(dead_code)]
     pub fn remove(&self, client_addr: &SocketAddr) {
         self.states.remove(client_addr);
     }
