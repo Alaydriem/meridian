@@ -1,0 +1,310 @@
+mod common;
+
+use std::sync::Arc;
+
+use anyhow::Result;
+use tokio_util::sync::CancellationToken;
+
+use meridian::api::ControlPlane;
+use meridian::config::{ApiConfig, TlsConfig};
+use meridian::routing::{Backend, RoutingTable};
+
+use common::generate_test_certs;
+
+fn setup_control_plane(
+    certs: &common::TestCerts,
+) -> Result<(u16, String, String, String)> {
+    // Write certs to temp files
+    let temp_dir = std::env::temp_dir().join(format!("meridian-test-{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let cert_path = temp_dir.join("api-cert.pem");
+    let key_path = temp_dir.join("api-key.pem");
+
+    std::fs::write(&cert_path, &certs.server_cert_pem)?;
+    std::fs::write(&key_path, &certs.server_key_pem)?;
+
+    Ok((
+        0, // will use free port
+        cert_path.to_string_lossy().into_owned(),
+        key_path.to_string_lossy().into_owned(),
+        temp_dir.to_string_lossy().into_owned(),
+    ))
+}
+
+async fn start_control_plane(
+    api_key: &str,
+    routing_table: Arc<RoutingTable>,
+    certs: &common::TestCerts,
+) -> Result<(u16, CancellationToken, String)> {
+    let (_, cert_path, key_path, temp_dir) = setup_control_plane(certs)?;
+
+    let port = common::free_port().await?;
+
+    let config = ApiConfig {
+        listen: format!("127.0.0.1:{port}"),
+        api_key: api_key.to_string(),
+        tls: TlsConfig {
+            certificate: cert_path,
+            key: key_path,
+        },
+    };
+
+    let control_plane = ControlPlane::new(config, routing_table);
+    let shutdown = CancellationToken::new();
+    let token = shutdown.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) = control_plane.run(token).await {
+            tracing::error!(error = %e, "control plane failed");
+        }
+    });
+
+    // Give server time to start (500ms needed when multiple tests run concurrently)
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    Ok((port, shutdown, temp_dir))
+}
+
+fn build_client(ca_cert_pem: &str) -> Result<reqwest::Client> {
+    let ca_cert = reqwest::tls::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+    let client = reqwest::Client::builder()
+        .add_root_certificate(ca_cert)
+        .danger_accept_invalid_certs(true) // self-signed certs
+        .build()?;
+    Ok(client)
+}
+
+#[tokio::test]
+async fn test_list_backends() -> Result<()> {
+    let certs = generate_test_certs("api.test.local");
+    let api_key = "test-secret-key";
+
+    let table = RoutingTable::new();
+    table.add_backend(
+        "server1".to_string(),
+        Backend {
+            hostname: "server1.example.com".to_string(),
+            tcp_addr: "127.0.0.1:10001".parse().unwrap(),
+            udp_addr: "127.0.0.1:20001".parse().unwrap(),
+            instance_id: 1,
+        },
+    );
+
+    let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
+    let client = build_client(&certs.ca_cert_pem)?;
+
+    let resp = client
+        .get(format!("https://127.0.0.1:{port}/backends"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await?;
+    let backends = body["backends"].as_array().unwrap();
+    assert_eq!(backends.len(), 1);
+    assert_eq!(backends[0]["name"], "server1");
+    assert_eq!(backends[0]["hostname"], "server1.example.com");
+
+    shutdown.cancel();
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_create_and_list_backend() -> Result<()> {
+    let certs = generate_test_certs("api.test.local");
+    let api_key = "test-secret-key";
+    let table = RoutingTable::new();
+
+    let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
+    let client = build_client(&certs.ca_cert_pem)?;
+
+    // Create a backend
+    let create_body = serde_json::json!({
+        "name": "server3",
+        "hostname": "server3.example.com",
+        "tcp_addr": "127.0.0.1:10003",
+        "udp_addr": "127.0.0.1:20003",
+        "instance_id": 3
+    });
+
+    let resp = client
+        .post(format!("https://127.0.0.1:{port}/backends"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&create_body)
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), 201);
+
+    // List and verify it appears
+    let resp = client
+        .get(format!("https://127.0.0.1:{port}/backends"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = resp.json().await?;
+    let backends = body["backends"].as_array().unwrap();
+    assert_eq!(backends.len(), 1);
+    assert_eq!(backends[0]["name"], "server3");
+
+    shutdown.cancel();
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_update_backend() -> Result<()> {
+    let certs = generate_test_certs("api.test.local");
+    let api_key = "test-secret-key";
+    let table = RoutingTable::new();
+    table.add_backend(
+        "server1".to_string(),
+        Backend {
+            hostname: "server1.example.com".to_string(),
+            tcp_addr: "127.0.0.1:10001".parse().unwrap(),
+            udp_addr: "127.0.0.1:20001".parse().unwrap(),
+            instance_id: 1,
+        },
+    );
+
+    let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
+    let client = build_client(&certs.ca_cert_pem)?;
+
+    let update_body = serde_json::json!({
+        "hostname": "server1-updated.example.com",
+        "tcp_addr": "127.0.0.1:10099",
+        "udp_addr": "127.0.0.1:20099",
+        "instance_id": 99
+    });
+
+    let resp = client
+        .put(format!("https://127.0.0.1:{port}/backends/server1"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&update_body)
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), 200);
+
+    // Verify updated
+    let resp = client
+        .get(format!("https://127.0.0.1:{port}/backends"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = resp.json().await?;
+    let backends = body["backends"].as_array().unwrap();
+    assert_eq!(backends.len(), 1);
+    assert_eq!(backends[0]["hostname"], "server1-updated.example.com");
+    assert_eq!(backends[0]["instance_id"], 99);
+
+    shutdown.cancel();
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_delete_backend() -> Result<()> {
+    let certs = generate_test_certs("api.test.local");
+    let api_key = "test-secret-key";
+    let table = RoutingTable::new();
+    table.add_backend(
+        "server1".to_string(),
+        Backend {
+            hostname: "server1.example.com".to_string(),
+            tcp_addr: "127.0.0.1:10001".parse().unwrap(),
+            udp_addr: "127.0.0.1:20001".parse().unwrap(),
+            instance_id: 1,
+        },
+    );
+
+    let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
+    let client = build_client(&certs.ca_cert_pem)?;
+
+    let resp = client
+        .delete(format!("https://127.0.0.1:{port}/backends/server1"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), 204);
+
+    // Verify deleted
+    let resp = client
+        .get(format!("https://127.0.0.1:{port}/backends"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = resp.json().await?;
+    let backends = body["backends"].as_array().unwrap();
+    assert_eq!(backends.len(), 0);
+
+    shutdown.cancel();
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_unauthorized_no_key() -> Result<()> {
+    let certs = generate_test_certs("api.test.local");
+    let api_key = "test-secret-key";
+    let table = RoutingTable::new();
+
+    let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
+    let client = build_client(&certs.ca_cert_pem)?;
+
+    let resp = client
+        .get(format!("https://127.0.0.1:{port}/backends"))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), 401);
+
+    shutdown.cancel();
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_unauthorized_wrong_key() -> Result<()> {
+    let certs = generate_test_certs("api.test.local");
+    let api_key = "test-secret-key";
+    let table = RoutingTable::new();
+
+    let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
+    let client = build_client(&certs.ca_cert_pem)?;
+
+    let resp = client
+        .get(format!("https://127.0.0.1:{port}/backends"))
+        .header("Authorization", "Bearer wrong-key")
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), 401);
+
+    shutdown.cancel();
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_delete_nonexistent() -> Result<()> {
+    let certs = generate_test_certs("api.test.local");
+    let api_key = "test-secret-key";
+    let table = RoutingTable::new();
+
+    let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
+    let client = build_client(&certs.ca_cert_pem)?;
+
+    let resp = client
+        .delete(format!("https://127.0.0.1:{port}/backends/nonexistent"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), 404);
+
+    shutdown.cancel();
+    Ok(())
+}

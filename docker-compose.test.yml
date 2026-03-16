@@ -1,0 +1,43 @@
+services:
+  meridian:
+    image: localhost/meridian:latest
+    command: ["--config", "/etc/meridian/config.hcl"]
+    ports:
+      - "4433:4433"
+      - "4433:4433/udp"
+      - "9443:9443"
+    volumes:
+      - ./certs:/certs:ro
+      - ./config.docker.hcl:/etc/meridian/config.hcl:ro
+
+  backend-1:
+    image: localhost/meridian:latest
+    entrypoint: ["meridian-backend"]
+    command: [
+      "--id", "1",
+      "--tcp-port", "443",
+      "--udp-port", "8443",
+      "--certs-dir", "/certs",
+      "--api", "https://meridian:9443",
+      "--api-key", "test-api-key"
+    ]
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      - meridian
+
+  backend-2:
+    image: localhost/meridian:latest
+    entrypoint: ["meridian-backend"]
+    command: [
+      "--id", "2",
+      "--tcp-port", "443",
+      "--udp-port", "8443",
+      "--certs-dir", "/certs",
+      "--api", "https://meridian:9443",
+      "--api-key", "test-api-key"
+    ]
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      - meridian

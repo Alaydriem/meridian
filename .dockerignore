@@ -1,0 +1,9 @@
+.git
+target
+certs
+*.log
+.taskwright
+.claude
+.github
+node_modules
+.env

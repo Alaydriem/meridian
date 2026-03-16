@@ -1,0 +1,75 @@
+[package]
+name = "meridian-proxy"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "meridian"
+path = "src/lib.rs"
+
+[[bin]]
+name = "meridian"
+path = "src/main.rs"
+required-features = ["server"]
+
+[features]
+default = ["server", "client"]
+server = [
+    "dep:tokio",
+    "dep:hcl-rs",
+    "dep:aws-lc-rs",
+    "dep:rustls",
+    "dep:rustls-pemfile",
+    "dep:tokio-rustls",
+    "dep:axum",
+    "dep:axum-server",
+    "dep:tracing-subscriber",
+    "dep:dashmap",
+    "dep:clap",
+    "dep:tokio-util",
+    "dep:socket2",
+]
+client = ["dep:reqwest"]
+
+[dependencies]
+# Shared (always available)
+serde = { version = "^1", features = ["derive"] }
+serde_json = { version = "^1" }
+anyhow = { version = "^1" }
+tracing = { version = "^0.1" }
+
+# Server-only
+tokio = { version = "^1", features = ["full"], optional = true }
+hcl-rs = { version = "^0.19", optional = true }
+aws-lc-rs = { version = "^1", optional = true }
+rustls = { version = "^0.23", optional = true }
+rustls-pemfile = { version = "^2", optional = true }
+tokio-rustls = { version = "^0.26", optional = true }
+axum = { version = "^0.8", optional = true }
+axum-server = { version = "^0.8", features = ["tls-rustls"], optional = true }
+tracing-subscriber = { version = "^0.3", optional = true }
+dashmap = { version = "^6", optional = true }
+clap = { version = "^4", features = ["derive"], optional = true }
+tokio-util = { version = "^0.7", optional = true }
+socket2 = { version = "^0.5", features = ["all"], optional = true }
+
+# Client-only
+reqwest = { version = "^0.13", features = ["json"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "^1", features = ["full"] }
+s2n-quic = { version = "=1.76.0", default-features = false, features = [
+    "provider-address-token-default",
+    "provider-tls-rustls",
+    "provider-event-tracing",
+    "unstable-provider-datagram",
+] }
+rcgen = { version = "^0.14" }
+reqwest = { version = "^0.13", features = ["json"] }
+tokio-test = { version = "^0.4" }
+tokio-util = { version = "^0.7" }
+rustls = { version = "^0.23" }
+rustls-pemfile = { version = "^2" }
+tokio-rustls = { version = "^0.26" }
+bytes = { version = "^1" }
+dashmap = { version = "^6" }

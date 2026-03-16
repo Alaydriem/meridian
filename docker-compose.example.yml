@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  meridian:
+    build: .
+    ports:
+      - "443:443"
+      - "443:443/udp"
+      - "9443:9443"
+    volumes:
+      - ./config.hcl:/etc/meridian/config.hcl:ro
+      - ./certs:/etc/meridian:ro
+    depends_on:
+      - bvc-server-1
+      - bvc-server-2
+
+  bvc-server-1:
+    image: your-bvc-server:latest
+    environment:
+      - INSTANCE_ID=1
+      - QUIC_PORT=8443
+
+  bvc-server-2:
+    image: your-bvc-server:latest
+    environment:
+      - INSTANCE_ID=2
+      - QUIC_PORT=8443

@@ -1,0 +1,7 @@
+/target
+*.log
+.taskwright/
+certs/
+config.test.hcl
+node_modules/
+.env
