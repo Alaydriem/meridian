@@ -30,6 +30,7 @@ server = [
     "dep:socket2",
 ]
 client = ["dep:reqwest"]
+io-uring = ["server", "dep:io-uring", "dep:libc"]
 
 [dependencies]
 # Shared (always available)
@@ -55,6 +56,12 @@ socket2 = { version = "^0.5", features = ["all"], optional = true }
 
 # Client-only
 reqwest = { version = "^0.13", features = ["json"], optional = true }
+
+# io_uring backend (Linux only)
+libc = { version = "^0.2", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = { git = "https://github.com/tokio-rs/io-uring", optional = true }
 
 [dev-dependencies]
 tokio = { version = "^1", features = ["full"] }

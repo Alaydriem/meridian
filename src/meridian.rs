@@ -32,13 +32,21 @@ impl Meridian {
         )
         .build();
 
-        let udp_router = UdpRouterBuilder::new(
+        #[allow(unused_mut)]
+        let mut udp_builder = UdpRouterBuilder::new(
             self.routing_table.clone(),
             self.config.listen.clone(),
         )
         .cid_prefix_length(self.config.cid_prefix_length)
-        .workers(self.config.workers)
-        .build();
+        .workers(self.config.workers);
+
+        #[cfg(feature = "io-uring")]
+        {
+            udp_builder = udp_builder.backend(crate::udp::UdpBackend::IoUring);
+            tracing::info!("io_uring UDP backend enabled");
+        }
+
+        let udp_router = udp_builder.build();
 
         let tcp_shutdown = shutdown.clone();
         let udp_shutdown = shutdown.clone();

@@ -6,6 +6,7 @@ use tokio::net::UdpSocket;
 
 pub struct EphemeralSocket {
     pub socket: Arc<UdpSocket>,
+    #[allow(dead_code)]
     pub client_addr: SocketAddr,
     pub last_activity: Instant,
 }

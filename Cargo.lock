@@ -1019,6 +1019,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-uring"
+version = "0.7.11"
+source = "git+https://github.com/tokio-rs/io-uring#1c0c4116ad194592cd4d0ed1596a0000371519b1"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1182,6 +1192,8 @@ dependencies = [
  "clap",
  "dashmap",
  "hcl-rs",
+ "io-uring",
+ "libc",
  "rcgen",
  "reqwest",
  "rustls",

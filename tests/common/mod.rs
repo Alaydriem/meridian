@@ -45,3 +45,17 @@ pub async fn free_port() -> io::Result<u16> {
     drop(listener);
     Ok(port)
 }
+
+/// Wait for a TCP server to become reachable, with retries.
+pub async fn wait_for_server(addr: &str, timeout: std::time::Duration) -> io::Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        match tokio::net::TcpStream::connect(addr).await {
+            Ok(_) => return Ok(()),
+            Err(_) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}

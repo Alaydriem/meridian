@@ -106,8 +106,12 @@ async fn test_tcp_passthrough_routes_by_sni() -> Result<()> {
         }
     });
 
-    // Wait for proxy to start
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Wait for proxy to accept connections (up to 5s)
+    common::wait_for_server(
+        &format!("127.0.0.1:{proxy_port}"),
+        std::time::Duration::from_secs(5),
+    )
+    .await?;
 
     // Connect through proxy with TLS client
     let mut root_store = rustls::RootCertStore::empty();

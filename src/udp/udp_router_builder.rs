@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::routing::RoutingTable;
 
-use super::udp_router::UdpRouter;
+use super::udp_router::{UdpBackend, UdpRouter};
 
 pub struct UdpRouterBuilder {
     routing_table: Arc<RoutingTable>,
@@ -11,6 +11,7 @@ pub struct UdpRouterBuilder {
     cid_prefix_length: u8,
     connection_ttl: Duration,
     workers: usize,
+    backend: UdpBackend,
 }
 
 impl UdpRouterBuilder {
@@ -21,6 +22,7 @@ impl UdpRouterBuilder {
             cid_prefix_length: 2,
             connection_ttl: Duration::from_secs(60),
             workers: 1,
+            backend: UdpBackend::default(),
         }
     }
 
@@ -39,6 +41,11 @@ impl UdpRouterBuilder {
         self
     }
 
+    pub fn backend(mut self, backend: UdpBackend) -> Self {
+        self.backend = backend;
+        self
+    }
+
     pub fn build(self) -> UdpRouter {
         UdpRouter::new(
             self.routing_table,
@@ -46,6 +53,7 @@ impl UdpRouterBuilder {
             self.cid_prefix_length,
             self.connection_ttl,
             self.workers,
+            self.backend,
         )
     }
 }

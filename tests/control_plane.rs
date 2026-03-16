@@ -14,8 +14,15 @@ use common::generate_test_certs;
 fn setup_control_plane(
     certs: &common::TestCerts,
 ) -> Result<(u16, String, String, String)> {
-    // Write certs to temp files
-    let temp_dir = std::env::temp_dir().join(format!("meridian-test-{}", std::process::id()));
+    // Write certs to a unique temp dir per invocation
+    let temp_dir = std::env::temp_dir().join(format!(
+        "meridian-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     std::fs::create_dir_all(&temp_dir)?;
 
     let cert_path = temp_dir.join("api-cert.pem");
@@ -60,8 +67,13 @@ async fn start_control_plane(
         }
     });
 
-    // Give server time to start (500ms needed when multiple tests run concurrently)
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Wait for server to accept connections (up to 5s)
+    common::wait_for_server(
+        &format!("127.0.0.1:{port}"),
+        std::time::Duration::from_secs(5),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("control plane did not start in time: {e}"))?;
 
     Ok((port, shutdown, temp_dir))
 }
