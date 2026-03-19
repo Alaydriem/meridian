@@ -10,7 +10,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "meridian"
 path = "src/main.rs"
-required-features = ["server"]
+required-features = ["server", "client"]
 
 [features]
 default = ["server", "client"]
@@ -48,7 +48,7 @@ rustls-pemfile = { version = "^2", optional = true }
 tokio-rustls = { version = "^0.26", optional = true }
 axum = { version = "^0.8", optional = true }
 axum-server = { version = "^0.8", features = ["tls-rustls"], optional = true }
-tracing-subscriber = { version = "^0.3", optional = true }
+tracing-subscriber = { version = "^0.3", features = ["env-filter"], optional = true }
 dashmap = { version = "^6", optional = true }
 clap = { version = "^4", features = ["derive"], optional = true }
 tokio-util = { version = "^0.7", optional = true }

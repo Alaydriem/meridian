@@ -61,10 +61,10 @@ async fn handle_connection(stream: TcpStream, routing_table: &RoutingTable) -> R
         anyhow::anyhow!("no backend for SNI '{sni}' from {peer_addr}")
     })?;
 
-    let span = tracing::info_span!("tcp_conn", %peer_addr, %sni, backend = %backend.tcp_addr);
+    let span = tracing::debug_span!("tcp_conn", %peer_addr, %sni, backend = %backend.tcp_addr);
     let _enter = span.enter();
 
-    tracing::info!("routing tcp connection");
+    tracing::debug!("routing tcp connection");
 
     let mut backend_stream = TcpStream::connect(backend.tcp_addr).await?;
     let mut client_stream = stream;
@@ -72,7 +72,7 @@ async fn handle_connection(stream: TcpStream, routing_table: &RoutingTable) -> R
     let (client_bytes, backend_bytes) =
         tokio::io::copy_bidirectional(&mut client_stream, &mut backend_stream).await?;
 
-    tracing::info!(client_bytes, backend_bytes, "tcp connection closed");
+    tracing::debug!(client_bytes, backend_bytes, "tcp connection closed");
 
     Ok(())
 }

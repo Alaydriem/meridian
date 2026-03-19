@@ -34,7 +34,7 @@ pub async fn create_backend(
     State(table): State<Arc<RoutingTable>>,
     Json(req): Json<CreateBackendRequest>,
 ) -> impl IntoResponse {
-    let tcp_addr = match req.tcp_addr.parse() {
+    let tcp_addr = match crate::routing::resolve::resolve_addr(&req.tcp_addr).await {
         Ok(addr) => addr,
         Err(e) => {
             return (
@@ -47,7 +47,7 @@ pub async fn create_backend(
         }
     };
 
-    let udp_addr = match req.udp_addr.parse() {
+    let udp_addr = match crate::routing::resolve::resolve_addr(&req.udp_addr).await {
         Ok(addr) => addr,
         Err(e) => {
             return (
@@ -68,6 +68,7 @@ pub async fn create_backend(
     };
 
     table.add_backend(req.name.clone(), backend);
+    tracing::info!(name = %req.name, hostname = %req.hostname, "backend added");
 
     let response = BackendResponse {
         name: req.name,
@@ -88,7 +89,7 @@ pub async fn update_backend(
     Path(name): Path<String>,
     Json(req): Json<UpdateBackendRequest>,
 ) -> impl IntoResponse {
-    let tcp_addr = match req.tcp_addr.parse() {
+    let tcp_addr = match crate::routing::resolve::resolve_addr(&req.tcp_addr).await {
         Ok(addr) => addr,
         Err(e) => {
             return (
@@ -101,7 +102,7 @@ pub async fn update_backend(
         }
     };
 
-    let udp_addr = match req.udp_addr.parse() {
+    let udp_addr = match crate::routing::resolve::resolve_addr(&req.udp_addr).await {
         Ok(addr) => addr,
         Err(e) => {
             return (
@@ -123,6 +124,7 @@ pub async fn update_backend(
 
     match table.update_backend(&name, backend) {
         Some(_old) => {
+            tracing::info!(%name, hostname = %req.hostname, "backend updated");
             let response = BackendResponse {
                 name,
                 hostname: req.hostname,
@@ -132,15 +134,18 @@ pub async fn update_backend(
             };
             (StatusCode::OK, Json(serde_json::to_value(response).unwrap()))
         }
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(
-                serde_json::to_value(ErrorResponse {
-                    error: format!("backend '{name}' not found"),
-                })
-                .unwrap(),
-            ),
-        ),
+        None => {
+            tracing::warn!(%name, "backend update failed: not found");
+            (
+                StatusCode::NOT_FOUND,
+                Json(
+                    serde_json::to_value(ErrorResponse {
+                        error: format!("backend '{name}' not found"),
+                    })
+                    .unwrap(),
+                ),
+            )
+        }
     }
 }
 
@@ -149,13 +154,19 @@ pub async fn delete_backend(
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     match table.remove_backend(&name) {
-        Some(_) => StatusCode::NO_CONTENT.into_response(),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("backend '{name}' not found"),
-            }),
-        )
-            .into_response(),
+        Some(_) => {
+            tracing::info!(%name, "backend removed");
+            StatusCode::NO_CONTENT.into_response()
+        }
+        None => {
+            tracing::warn!(%name, "backend delete failed: not found");
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("backend '{name}' not found"),
+                }),
+            )
+                .into_response()
+        }
     }
 }
