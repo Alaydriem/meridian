@@ -13,6 +13,7 @@ Meridian routes both TCP (HTTPS) and UDP (QUIC) traffic to backend servers based
 - **Control plane API** — HTTPS API for dynamic backend registration, updates, and removal at runtime
 - **Bearer-token authentication** — API key middleware protects all control plane endpoints
 - **HCL configuration** — human-friendly config format with static backend definitions
+- **Built-in CLI** — manage backends and health-check a running instance without cURL
 - **Dual crate features** — use `server`, `client`, or both as a library in your own application
 
 ## Architecture
@@ -101,6 +102,56 @@ cargo build --release
 ```
 
 The `--config` flag defaults to `config.hcl` in the working directory if omitted.
+
+---
+
+## CLI
+
+Meridian includes a built-in CLI for managing a running instance without needing cURL or other HTTP tools in the container.
+
+### Health Check
+
+Verify a running instance is alive and its API is responsive:
+
+```bash
+meridian --config config.hcl health
+# Meridian is healthy. 3 backend(s) registered.
+```
+
+The health check exercises the full API path (TLS + authentication + routing table read). The exit code is `0` on success, `1` on failure, making it suitable for container `HEALTHCHECK` directives.
+
+### Backend Management
+
+```bash
+# List all backends
+meridian backend list
+
+# Add a backend
+meridian backend add server1 \
+  --hostname server1.example.com \
+  --tcp-addr 10.0.0.1:443 \
+  --udp-addr 10.0.0.1:8443 \
+  --instance-id 1
+
+# Update a backend
+meridian backend update server1 \
+  --hostname server1-new.example.com \
+  --tcp-addr 10.0.0.2:443 \
+  --udp-addr 10.0.0.2:8443 \
+  --instance-id 1
+
+# Remove a backend
+meridian backend remove server1
+```
+
+### Global Flags
+
+| Flag | Description |
+|---|---|
+| `--config <path>` | Path to HCL config file (default: `config.hcl`) |
+| `--insecure` | Skip TLS certificate verification when connecting to the API |
+
+The CLI reads the `api` block from `config.hcl` to determine the API address, authentication key, and TLS trust. The `--insecure` flag is useful for development with self-signed certificates.
 
 ---
 
@@ -346,7 +397,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let config = parse_config_file("config.hcl")?;
-    let meridian = MeridianBuilder::new(config).build()?;
+    let meridian = MeridianBuilder::new(config).build().await?;
 
     let shutdown = CancellationToken::new();
     let token = shutdown.clone();
@@ -380,7 +431,7 @@ let hcl = r#"
 "#;
 
 let config = parse_config(hcl)?;
-let meridian = MeridianBuilder::new(config).build()?;
+let meridian = MeridianBuilder::new(config).build().await?;
 ```
 
 ### Programmatic Configuration
@@ -411,7 +462,7 @@ let config = MeridianConfig {
     ]),
 };
 
-let meridian = MeridianBuilder::new(config).build()?;
+let meridian = MeridianBuilder::new(config).build().await?;
 ```
 
 ### Accessing the Routing Table
@@ -419,7 +470,7 @@ let meridian = MeridianBuilder::new(config).build()?;
 The `Meridian` instance exposes its routing table for direct inspection:
 
 ```rust
-let meridian = MeridianBuilder::new(config).build()?;
+let meridian = MeridianBuilder::new(config).build().await?;
 
 // Read the current routing table
 let table = meridian.routing_table();

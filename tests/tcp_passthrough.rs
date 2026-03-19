@@ -96,7 +96,7 @@ async fn test_tcp_passthrough_routes_by_sni() -> Result<()> {
     );
 
     let config = parse_config(&hcl)?;
-    let meridian = MeridianBuilder::new(config).build()?;
+    let meridian = MeridianBuilder::new(config).build().await?;
     let proxy_shutdown = CancellationToken::new();
     let proxy_token = proxy_shutdown.clone();
 
@@ -177,7 +177,7 @@ async fn test_tcp_unknown_sni_rejected() -> Result<()> {
     );
 
     let config = parse_config(&hcl)?;
-    let meridian = MeridianBuilder::new(config).build()?;
+    let meridian = MeridianBuilder::new(config).build().await?;
     let proxy_shutdown = CancellationToken::new();
     let proxy_token = proxy_shutdown.clone();
 
