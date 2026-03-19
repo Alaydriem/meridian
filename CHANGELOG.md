@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/Alaydriem/meridian/compare/v1.0.0...v1.1.0) (2026-03-19)
+
+
+### Features
+
+* cli ([#4](https://github.com/Alaydriem/meridian/issues/4)) ([07268bd](https://github.com/Alaydriem/meridian/commit/07268bd3635f98bf6492bffdea2a272074033fee)), closes [#2](https://github.com/Alaydriem/meridian/issues/2) [#3](https://github.com/Alaydriem/meridian/issues/3)
+
 # 1.0.0 (2026-03-16)
 
 
