@@ -28,6 +28,10 @@ server = [
     "dep:clap",
     "dep:tokio-util",
     "dep:socket2",
+    "dep:async-trait",
+    "dep:foca",
+    "dep:postcard",
+    "dep:rand",
 ]
 client = ["dep:reqwest"]
 io-uring = ["server", "dep:io-uring", "dep:libc"]
@@ -53,6 +57,15 @@ dashmap = { version = "^6", optional = true }
 clap = { version = "^4", features = ["derive"], optional = true }
 tokio-util = { version = "^0.7", optional = true }
 socket2 = { version = "^0.5", features = ["all"], optional = true }
+async-trait = { version = "^0.1", optional = true }
+foca = { version = "^1", default-features = false, features = [
+    "std",
+    "serde",
+    "tracing",
+    "postcard-codec",
+], optional = true }
+postcard = { version = "^1", features = ["alloc"], optional = true }
+rand = { version = "^0.9", optional = true }
 
 # Client-only
 reqwest = { version = "^0.13", features = ["json"], optional = true }

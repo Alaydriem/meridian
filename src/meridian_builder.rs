@@ -17,7 +17,7 @@ impl MeridianBuilder {
         let routing_table = RoutingTable::new();
 
         for (name, backend_config) in &self.config.backend {
-            let tcp_addr = crate::routing::resolve::resolve_addr(&backend_config.tcp_addr)
+            let tcp_addr = crate::routing::resolve::AddressResolver::resolve_addr(&backend_config.tcp_addr)
                 .await
                 .map_err(|e| {
                     anyhow::anyhow!(
@@ -25,7 +25,7 @@ impl MeridianBuilder {
                         backend_config.tcp_addr
                     )
                 })?;
-            let udp_addr = crate::routing::resolve::resolve_addr(&backend_config.udp_addr)
+            let udp_addr = crate::routing::resolve::AddressResolver::resolve_addr(&backend_config.udp_addr)
                 .await
                 .map_err(|e| {
                     anyhow::anyhow!(
@@ -34,12 +34,12 @@ impl MeridianBuilder {
                     )
                 })?;
 
-            let backend = Backend {
-                hostname: backend_config.hostname.clone(),
+            let backend = Backend::new(
+                backend_config.hostname.clone(),
                 tcp_addr,
                 udp_addr,
-                instance_id: backend_config.instance_id,
-            };
+                backend_config.instance_id,
+            );
 
             routing_table.add_backend(name.clone(), backend);
         }

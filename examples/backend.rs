@@ -8,6 +8,7 @@ use clap::Parser;
 use dashmap::DashMap;
 use s2n_quic::connection::Handle;
 use s2n_quic::provider::connection_id;
+use s2n_quic::provider::event::{events, ConnectionInfo, ConnectionMeta, Subscriber};
 use s2n_quic::Server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -49,6 +50,49 @@ struct Cli {
     /// In Docker, set to 0.0.0.0 to accept connections from the container network.
     #[arg(long, default_value = "127.0.0.1")]
     bind_addr: String,
+}
+
+/// Counts QUIC paths per connection.
+///
+/// s2n-quic permits `MAX_ALLOWED_PATHS = 5` and never reclaims them, so every
+/// distinct proxy-side source address a connection is relayed from spends one of
+/// them. Tests assert against `max_observed()` to prove the proxy is not consuming
+/// a client's budget.
+#[derive(Clone, Default)]
+struct PathCounter {
+    counts: Arc<DashMap<u64, usize>>,
+    next_id: Arc<AtomicU64>,
+}
+
+impl PathCounter {
+    /// Highest path count observed on any connection.
+    fn max_observed(&self) -> usize {
+        self.counts.iter().map(|r| *r.value()).max().unwrap_or(0)
+    }
+}
+
+impl Subscriber for PathCounter {
+    type ConnectionContext = u64;
+
+    fn create_connection_context(
+        &mut self,
+        _meta: &ConnectionMeta,
+        _info: &ConnectionInfo,
+    ) -> Self::ConnectionContext {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        // Every connection starts life with one path.
+        self.counts.insert(id, 1);
+        id
+    }
+
+    fn on_path_created(
+        &mut self,
+        context: &mut Self::ConnectionContext,
+        _meta: &ConnectionMeta,
+        _event: &events::PathCreated,
+    ) {
+        *self.counts.entry(*context).or_insert(1) += 1;
+    }
 }
 
 // Custom ConnectionId format with 2-byte instance_id prefix
@@ -137,9 +181,13 @@ async fn main() -> Result<()> {
         .build()
         .unwrap();
 
+    let path_counter = PathCounter::default();
+
     let mut quic_server = Server::builder()
         .with_tls(tls)
         .map_err(|e| anyhow::anyhow!("with_tls error: {e}"))?
+        .with_event(path_counter.clone())
+        .map_err(|e| anyhow::anyhow!("with_event error: {e}"))?
         .with_io(quic_bind.as_str())
         .map_err(|e| anyhow::anyhow!("with_io error: {e}"))?
         .with_connection_id(cid_format)
@@ -183,13 +231,22 @@ async fn main() -> Result<()> {
             loop {
                 let (stream, peer) = tcp_listener.accept().await.unwrap();
                 let acceptor = acceptor.clone();
+                let path_counter = path_counter.clone();
                 tokio::spawn(async move {
                     match acceptor.accept(stream).await {
                         Ok(mut tls_stream) => {
                             let mut buf = vec![0u8; 4096];
-                            let _ = tls_stream.read(&mut buf).await;
+                            let n = tls_stream.read(&mut buf).await.unwrap_or(0);
+                            // Tests poll GET /path-count to assert the proxy is not
+                            // spending this backend's QUIC path budget.
+                            let body = if buf[..n].starts_with(b"GET /path-count") {
+                                format!("{{\"max_paths\":{}}}", path_counter.max_observed())
+                            } else {
+                                format!("{{\"backend_id\":{instance_id}}}")
+                            };
                             let response = format!(
-                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"backend_id\":{instance_id}}}"
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                                body.len()
                             );
                             let _ = tls_stream.write_all(response.as_bytes()).await;
                             let _ = tls_stream.shutdown().await;
@@ -210,7 +267,7 @@ async fn main() -> Result<()> {
 
     // QUIC handler
     let quic_handle = tokio::spawn(async move {
-        while let Some(mut conn) = quic_server.accept().await {
+        while let Some(conn) = quic_server.accept().await {
             let peer_addr = conn
                 .remote_addr()
                 .map(|a| a.to_string())
@@ -279,7 +336,7 @@ async fn main() -> Result<()> {
                                         let len = u32::from_be_bytes(header) as usize;
                                         if len > 0 && len <= 65535 {
                                             if let Err(e) = handle_framed_stream(
-                                                &mut recv, &mut send, instance_id, len, &header,
+                                                &mut recv, &mut send, instance_id, len,
                                             ).await {
                                                 tracing::debug!(%peer, error = %e, "framed stream ended");
                                             }
@@ -318,11 +375,9 @@ async fn main() -> Result<()> {
         send: &mut (impl tokio::io::AsyncWrite + Unpin),
         instance_id: u16,
         first_len: usize,
-        first_header: &[u8; 4],
     ) -> anyhow::Result<()> {
         let id_bytes = instance_id.to_be_bytes();
         let mut len = first_len;
-        let mut is_first = true;
 
         loop {
             // Read payload
@@ -344,11 +399,8 @@ async fn main() -> Result<()> {
                         break;
                     }
                 }
-                Err(_) => break, // Stream closed
+                Err(_) => break,
             }
-
-            let _ = is_first;
-            is_first = false;
         }
 
         Ok(())

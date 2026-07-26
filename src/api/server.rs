@@ -11,13 +11,16 @@ use axum::Router;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::ApiConfig;
+use crate::health::DatapathHealth;
 use crate::routing::RoutingTable;
 
+use super::backend_service::BackendService;
 use super::handlers;
 
 pub struct ControlPlane {
     config: ApiConfig,
     routing_table: Arc<RoutingTable>,
+    health: Option<Arc<DatapathHealth>>,
 }
 
 impl ControlPlane {
@@ -25,7 +28,15 @@ impl ControlPlane {
         Self {
             config,
             routing_table,
+            health: None,
         }
+    }
+
+    /// Serve `GET /health/datapath` from this handle. Without it the route is
+    /// absent, which keeps the control plane usable standalone and in tests.
+    pub fn with_health(mut self, health: Arc<DatapathHealth>) -> Self {
+        self.health = Some(health);
+        self
     }
 
     pub async fn run(&self, shutdown: CancellationToken) -> Result<()> {
@@ -38,9 +49,26 @@ impl ControlPlane {
             .route("/backends/{name}", delete(handlers::delete_backend))
             .layer(middleware::from_fn(move |req, next| {
                 let key = api_key.clone();
-                api_key_middleware(key, req, next)
+                Self::api_key_middleware(key, req, next)
             }))
-            .with_state(self.routing_table.clone());
+            .with_state(BackendService::new_shared(self.routing_table.clone()));
+
+        // Merged separately because it carries different state. Behind the same
+        // auth layer as everything else on this port.
+        let app = match &self.health {
+            Some(health) => {
+                let key = self.config.api_key.clone();
+                let health_routes = Router::new()
+                    .route("/health/datapath", get(handlers::datapath_health))
+                    .layer(middleware::from_fn(move |req, next| {
+                        let key = key.clone();
+                        Self::api_key_middleware(key, req, next)
+                    }))
+                    .with_state(health.clone());
+                app.merge(health_routes)
+            }
+            None => app,
+        };
 
         // Load TLS certs
         let cert_pem = std::fs::read(&self.config.tls.certificate)
@@ -84,22 +112,23 @@ impl ControlPlane {
 
         Ok(())
     }
-}
 
-async fn api_key_middleware(
-    expected_key: String,
-    req: Request,
-    next: Next,
-) -> impl IntoResponse {
-    let auth_header = req
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok());
+    async fn api_key_middleware(
+        expected_key: String,
+        req: Request,
+        next: Next,
+    ) -> impl IntoResponse {
+        let auth_header = req
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok());
 
-    match auth_header {
-        Some(header) if header == format!("Bearer {expected_key}") => {
-            next.run(req).await.into_response()
+        match auth_header {
+            Some(header) if header == format!("Bearer {expected_key}") => {
+                next.run(req).await.into_response()
+            }
+            _ => StatusCode::UNAUTHORIZED.into_response(),
         }
-        _ => StatusCode::UNAUTHORIZED.into_response(),
     }
 }
+

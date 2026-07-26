@@ -95,12 +95,12 @@ async fn test_list_backends() -> Result<()> {
     let table = RoutingTable::new();
     table.add_backend(
         "server1".to_string(),
-        Backend {
-            hostname: "server1.example.com".to_string(),
-            tcp_addr: "127.0.0.1:10001".parse().unwrap(),
-            udp_addr: "127.0.0.1:20001".parse().unwrap(),
-            instance_id: 1,
-        },
+        Backend::new(
+            "server1.example.com".to_string(),
+            "127.0.0.1:10001".parse().unwrap(),
+            "127.0.0.1:20001".parse().unwrap(),
+            1,
+        ),
     );
 
     let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
@@ -174,12 +174,12 @@ async fn test_update_backend() -> Result<()> {
     let table = RoutingTable::new();
     table.add_backend(
         "server1".to_string(),
-        Backend {
-            hostname: "server1.example.com".to_string(),
-            tcp_addr: "127.0.0.1:10001".parse().unwrap(),
-            udp_addr: "127.0.0.1:20001".parse().unwrap(),
-            instance_id: 1,
-        },
+        Backend::new(
+            "server1.example.com".to_string(),
+            "127.0.0.1:10001".parse().unwrap(),
+            "127.0.0.1:20001".parse().unwrap(),
+            1,
+        ),
     );
 
     let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
@@ -218,6 +218,62 @@ async fn test_update_backend() -> Result<()> {
     Ok(())
 }
 
+/// A heartbeat uses `PUT` to both register and refresh, so absence must not be an
+/// error. Without this, a backend whose record was lost (Meridian restart, lease
+/// expiry) could never re-establish itself.
+#[tokio::test]
+async fn test_put_creates_when_absent_and_is_idempotent() -> Result<()> {
+    let certs = generate_test_certs("api.test.local");
+    let api_key = "test-secret-key";
+    let table = RoutingTable::new();
+
+    let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;
+    let client = build_client(&certs.ca_cert_pem)?;
+
+    let body = serde_json::json!({
+        "hostname": "up.example.com",
+        "tcp_addr": "127.0.0.1:15443",
+        "udp_addr": "127.0.0.1:15444",
+        "instance_id": 77
+    });
+
+    // First PUT for a name that does not exist yet.
+    let resp = client
+        .put(format!("https://127.0.0.1:{port}/backends/upserted"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await?;
+    assert_eq!(
+        resp.status(),
+        201,
+        "PUT must create when the record is absent"
+    );
+
+    // Second identical PUT refreshes rather than erroring.
+    let resp = client
+        .put(format!("https://127.0.0.1:{port}/backends/upserted"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 200, "a repeated PUT must be idempotent");
+
+    // Exactly one record, not two.
+    let resp = client
+        .get(format!("https://127.0.0.1:{port}/backends"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await?;
+    let listed: serde_json::Value = resp.json().await?;
+    let backends = listed["backends"].as_array().unwrap();
+    assert_eq!(backends.len(), 1, "upsert must not duplicate the record");
+    assert_eq!(backends[0]["name"], "upserted");
+
+    shutdown.cancel();
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_delete_backend() -> Result<()> {
     let certs = generate_test_certs("api.test.local");
@@ -225,12 +281,12 @@ async fn test_delete_backend() -> Result<()> {
     let table = RoutingTable::new();
     table.add_backend(
         "server1".to_string(),
-        Backend {
-            hostname: "server1.example.com".to_string(),
-            tcp_addr: "127.0.0.1:10001".parse().unwrap(),
-            udp_addr: "127.0.0.1:20001".parse().unwrap(),
-            instance_id: 1,
-        },
+        Backend::new(
+            "server1.example.com".to_string(),
+            "127.0.0.1:10001".parse().unwrap(),
+            "127.0.0.1:20001".parse().unwrap(),
+            1,
+        ),
     );
 
     let (port, shutdown, _temp_dir) = start_control_plane(api_key, table, &certs).await?;

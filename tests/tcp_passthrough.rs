@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
-use meridian::config::parse_config;
+use meridian::config::ConfigParser;
 use meridian::MeridianBuilder;
 
 use common::{free_port, generate_test_certs};
@@ -95,7 +95,7 @@ async fn test_tcp_passthrough_routes_by_sni() -> Result<()> {
     "#
     );
 
-    let config = parse_config(&hcl)?;
+    let config = ConfigParser::parse_config(&hcl)?;
     let meridian = MeridianBuilder::new(config).build().await?;
     let proxy_shutdown = CancellationToken::new();
     let proxy_token = proxy_shutdown.clone();
@@ -176,7 +176,7 @@ async fn test_tcp_unknown_sni_rejected() -> Result<()> {
     "#
     );
 
-    let config = parse_config(&hcl)?;
+    let config = ConfigParser::parse_config(&hcl)?;
     let meridian = MeridianBuilder::new(config).build().await?;
     let proxy_shutdown = CancellationToken::new();
     let proxy_token = proxy_shutdown.clone();

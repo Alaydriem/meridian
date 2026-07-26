@@ -1,27 +1,134 @@
-version: "3.8"
+# One public IP fronting many single-tenant backends.
+#
+# Only meridian publishes ports. Backends are reachable solely on the internal
+# network, which is the point: they share :443 behind SNI and QUIC CID routing.
 
 services:
   meridian:
-    build: .
+    image: ghcr.io/alaydriem/meridian:latest
     ports:
       - "443:443"
       - "443:443/udp"
-      - "9443:9443"
+      # Control plane. Bound to loopback so the registry API is not internet
+      # reachable — it can repoint any tenant's traffic. Drop this line entirely if
+      # you only manage backends from static config.
+      - "127.0.0.1:9443:9443"
     volumes:
-      - ./config.hcl:/etc/meridian/config.hcl:ro
-      - ./certs:/etc/meridian:ro
+      - ${PWD:-.}/config.hcl:/etc/meridian/config.hcl:ro
+      # Mount certs somewhere other than /etc/meridian: a directory mounted there
+      # would hide config.hcl.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      proxy:
+        ipv4_address: 172.20.0.2
+    # Uses the binary already in the image. Do not shell out to curl — installing
+    # it per probe makes liveness depend on a package mirror being reachable.
+    #
+    # --insecure is correct here: the client derives its URL from `api.listen`
+    # (https://0.0.0.0:9443) and pins `api.tls.certificate` as the CA, so neither the
+    # name nor a public cert validates against a loopback probe. This checks that the
+    # process answers, not who it is.
+    #
+    # Add --datapath for liveness rather than readiness: that variant fails when no
+    # UDP worker is live, which is a restart signal. Plain `health` is what a
+    # readiness gate wants, since a partially degraded pool still serves correctly.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "meridian",
+          "--config",
+          "/etc/meridian/config.hcl",
+          "--insecure",
+          "health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  tenant-one:
+    image: your-backend:latest
+    # No `ports:` — meridian owns :443 on the host. Publishing here collides with it
+    # and docker refuses to start.
+    volumes:
+      - ${PWD:-.}/tenant-one:/data
+      # Each backend terminates its own TLS, so it needs a certificate for the
+      # hostname clients send. Meridian only forwards.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      proxy:
+        ipv4_address: 172.20.0.3
     depends_on:
-      - bvc-server-1
-      - bvc-server-2
+      meridian:
+        condition: service_healthy
+    restart: unless-stopped
 
-  bvc-server-1:
-    image: your-bvc-server:latest
-    environment:
-      - INSTANCE_ID=1
-      - QUIC_PORT=8443
+  tenant-two:
+    image: your-backend:latest
+    volumes:
+      - ${PWD:-.}/tenant-two:/data
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      proxy:
+        ipv4_address: 172.20.0.4
+    depends_on:
+      meridian:
+        condition: service_healthy
+    restart: unless-stopped
 
-  bvc-server-2:
-    image: your-bvc-server:latest
-    environment:
-      - INSTANCE_ID=2
-      - QUIC_PORT=8443
+networks:
+  proxy:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+# ---------------------------------------------------------------------------
+# config.hcl
+# ---------------------------------------------------------------------------
+#
+# `listen` is required and has no default — omitting it fails startup with
+# "missing field `listen`".
+#
+#   listen = "0.0.0.0:443"
+#
+#   api {
+#     listen  = "0.0.0.0:9443"
+#     # Never leave this empty. Authorization is compared against the literal
+#     # "Bearer <api_key>", so an empty key admits anyone sending "Bearer ".
+#     api_key = "<a long random secret>"
+#
+#     tls {
+#       certificate = "/etc/letsencrypt/live/proxy.example.com/fullchain.pem"
+#       key         = "/etc/letsencrypt/live/proxy.example.com/privkey.pem"
+#     }
+#   }
+#
+#   # Static backends are resolved once at startup and reloaded on every restart,
+#   # so they survive a meridian restart with no re-registration. They are also
+#   # exempt from lease expiry, because nothing heartbeats them.
+#   #
+#   # Use literal IPs: addresses are resolved during startup and an unresolvable
+#   # one aborts it, so a name that is not up yet turns into a boot-order race.
+#   #
+#   # instance_id MUST equal the backend's own configured instance_id. It is the
+#   # CID prefix every post-handshake packet is routed on: a mismatch leaves HTTPS
+#   # working while voice dies once the handshake completes.
+#   backend "tenant-one" {
+#     hostname    = "one.example.com"
+#     tcp_addr    = "172.20.0.3:443"
+#     udp_addr    = "172.20.0.3:443"
+#     instance_id = 1
+#   }
+#
+#   backend "tenant-two" {
+#     hostname    = "two.example.com"
+#     tcp_addr    = "172.20.0.4:443"
+#     udp_addr    = "172.20.0.4:443"
+#     instance_id = 2
+#   }
+#
+# Leave `lease_ttl_secs` unset unless every backend refreshes its registration on
+# a heartbeat. With a one-shot registration, enabling it makes each backend
+# unroutable one TTL after it appears.
