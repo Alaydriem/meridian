@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::health::DatapathHealth;
 use crate::routing::RoutingTable;
 
 use super::udp_router::{UdpBackend, UdpRouter};
@@ -12,6 +13,7 @@ pub struct UdpRouterBuilder {
     connection_ttl: Duration,
     workers: usize,
     backend: UdpBackend,
+    health: Option<Arc<DatapathHealth>>,
 }
 
 impl UdpRouterBuilder {
@@ -23,7 +25,15 @@ impl UdpRouterBuilder {
             connection_ttl: Duration::from_secs(60),
             workers: 1,
             backend: UdpBackend::default(),
+            health: None,
         }
+    }
+
+    /// Share an existing health handle, so the control plane and the datapath
+    /// observe the same state. Defaults to a fresh one sized to `workers`.
+    pub fn health(mut self, health: Arc<DatapathHealth>) -> Self {
+        self.health = Some(health);
+        self
     }
 
     pub fn cid_prefix_length(mut self, length: u8) -> Self {
@@ -47,6 +57,10 @@ impl UdpRouterBuilder {
     }
 
     pub fn build(self) -> UdpRouter {
+        let health = self
+            .health
+            .clone()
+            .unwrap_or_else(|| DatapathHealth::new(self.workers));
         UdpRouter::new(
             self.routing_table,
             self.listen_addr,
@@ -54,6 +68,7 @@ impl UdpRouterBuilder {
             self.connection_ttl,
             self.workers,
             self.backend,
+            health,
         )
     }
 }

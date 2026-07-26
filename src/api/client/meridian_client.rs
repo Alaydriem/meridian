@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 
 use crate::api::dto::{
     BackendListResponse, BackendResponse, CreateBackendRequest, ErrorResponse,
-    UpdateBackendRequest,
+    UpdateBackendRequest, DatapathHealthResponse,
 };
 
 pub struct MeridianClient {
@@ -84,6 +84,28 @@ impl MeridianClient {
                 .map(|e| e.error)
                 .unwrap_or_else(|_| format!("HTTP {status}"));
             anyhow::bail!("list backends failed: {error}")
+        }
+    }
+
+    /// Fetch datapath health. Returns `Err` if the instance cannot serve, so a
+    /// caller can treat any error as "not healthy" without inspecting the body.
+    pub async fn datapath_health(&self) -> Result<DatapathHealthResponse> {
+        let resp = self
+            .http_client
+            .get(format!("{}/health/datapath", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .context("failed to send datapath health request")?;
+
+        let status = resp.status();
+        // 503 still carries a valid body describing why, so parse either way.
+        if status.is_success() || status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            resp.json::<DatapathHealthResponse>()
+                .await
+                .context("failed to parse datapath health response")
+        } else {
+            anyhow::bail!("datapath health failed: HTTP {status}")
         }
     }
 

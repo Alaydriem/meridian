@@ -61,7 +61,7 @@ impl QuicInitialDecryptor {
             bail!("packet too short for token");
         }
         let (token_len, token_len_size) =
-            read_varint(&packet[pos..]).context("failed to read token length")?;
+            Self::read_varint(&packet[pos..]).context("failed to read token length")?;
         pos += token_len_size + token_len as usize;
 
         // Payload length (varint)
@@ -69,7 +69,7 @@ impl QuicInitialDecryptor {
             bail!("packet too short for payload length");
         }
         let (payload_len, payload_len_size) =
-            read_varint(&packet[pos..]).context("failed to read payload length")?;
+            Self::read_varint(&packet[pos..]).context("failed to read payload length")?;
         pos += payload_len_size;
 
         let header_end = pos; // end of header (before packet number)
@@ -82,7 +82,7 @@ impl QuicInitialDecryptor {
         }
 
         // Derive keys from DCID
-        let (key, iv, hp_key) = derive_initial_keys(salt, dcid, version)?;
+        let (key, iv, hp_key) = Self::derive_initial_keys(salt, dcid, version)?;
 
         // Remove header protection
         // Sample starts 4 bytes after the start of the packet number field
@@ -93,7 +93,7 @@ impl QuicInitialDecryptor {
         let sample = &packet[header_end + 4..header_end + 4 + 16];
 
         // AES-ECB encrypt the sample to get the mask
-        let mask = aes_ecb_encrypt(&hp_key, sample)?;
+        let mask = Self::aes_ecb_encrypt(&hp_key, sample)?;
 
         // First byte: remove protection (lower 4 bits for long header)
         let mut header = packet[..payload_end].to_vec();
@@ -140,7 +140,7 @@ impl QuicInitialDecryptor {
             .map_err(|e| anyhow::anyhow!("decryption failed: {e}"))?;
 
         // Walk frames to find CRYPTO frame (type 0x06)
-        match extract_sni_from_frames(plaintext) {
+        match Self::extract_sni_from_frames(plaintext) {
             Ok(sni) => Ok(sni),
             Err(e) => {
                 tracing::debug!(
@@ -184,11 +184,11 @@ impl QuicInitialDecryptor {
         let mut pos = scid_offset + 1 + scid_len;
 
         let (token_len, token_len_size) =
-            read_varint(&packet[pos..]).context("token length")?;
+            Self::read_varint(&packet[pos..]).context("token length")?;
         pos += token_len_size + token_len as usize;
 
         let (payload_len, payload_len_size) =
-            read_varint(&packet[pos..]).context("payload length")?;
+            Self::read_varint(&packet[pos..]).context("payload length")?;
         pos += payload_len_size;
 
         let header_end = pos;
@@ -197,13 +197,13 @@ impl QuicInitialDecryptor {
             bail!("packet too short for payload");
         }
 
-        let (key, iv, hp_key) = derive_initial_keys(salt, &dcid, version)?;
+        let (key, iv, hp_key) = Self::derive_initial_keys(salt, &dcid, version)?;
 
         if packet.len() < header_end + 4 + 16 {
             bail!("packet too short for HP sample");
         }
         let sample = &packet[header_end + 4..header_end + 4 + 16];
-        let mask = aes_ecb_encrypt(&hp_key, sample)?;
+        let mask = Self::aes_ecb_encrypt(&hp_key, sample)?;
 
         let mut header = packet[..payload_end].to_vec();
         header[0] ^= mask[0] & 0x0f;
@@ -238,8 +238,296 @@ impl QuicInitialDecryptor {
             .open_in_place(nonce, Aad::from(aad), &mut ciphertext)
             .map_err(|e| anyhow::anyhow!("decrypt: {e}"))?;
 
-        let fragments = extract_crypto_fragments(plaintext)?;
+        let fragments = Self::extract_crypto_fragments(plaintext)?;
         Ok((dcid, fragments))
+    }
+
+    /// Derive Initial client keys from DCID (RFC 9001 §5.2)
+    fn derive_initial_keys(
+        salt: &[u8; 20],
+        dcid: &[u8],
+        version: u32,
+    ) -> Result<([u8; 16], [u8; 12], [u8; 16])> {
+        let hkdf_salt = Salt::new(HKDF_SHA256, salt);
+        let initial_secret = hkdf_salt.extract(dcid);
+
+        let client_label = match version {
+            0x6b3343cf => "client in",
+            _ => "client in",
+        };
+
+        let client_initial_secret =
+            Self::hkdf_expand_label(&initial_secret, client_label, &[], 32)?;
+
+        // Re-import client_initial_secret as PRK for further expansion
+        let client_prk = hkdf::Prk::new_less_safe(HKDF_SHA256, &client_initial_secret);
+
+        let key_label = "quic key";
+        let iv_label = "quic iv";
+        let hp_label = "quic hp";
+
+        let key = Self::hkdf_expand_label(&client_prk, key_label, &[], 16)?;
+        let iv = Self::hkdf_expand_label(&client_prk, iv_label, &[], 12)?;
+        let hp = Self::hkdf_expand_label(&client_prk, hp_label, &[], 16)?;
+
+        let mut key_bytes = [0u8; 16];
+        let mut iv_bytes = [0u8; 12];
+        let mut hp_bytes = [0u8; 16];
+        key_bytes.copy_from_slice(&key);
+        iv_bytes.copy_from_slice(&iv);
+        hp_bytes.copy_from_slice(&hp);
+
+        Ok((key_bytes, iv_bytes, hp_bytes))
+    }
+
+    fn hkdf_expand_label(
+        prk: &hkdf::Prk,
+        label: &str,
+        context: &[u8],
+        length: usize,
+    ) -> Result<Vec<u8>> {
+        // Build HkdfLabel structure
+        let full_label = format!("tls13 {label}");
+        let full_label_bytes = full_label.as_bytes();
+
+        let mut info = Vec::with_capacity(2 + 1 + full_label_bytes.len() + 1 + context.len());
+        info.push((length >> 8) as u8);
+        info.push((length & 0xFF) as u8);
+        info.push(full_label_bytes.len() as u8);
+        info.extend_from_slice(full_label_bytes);
+        info.push(context.len() as u8);
+        info.extend_from_slice(context);
+
+        let info_refs: &[&[u8]] = &[&info];
+        let okm = prk
+            .expand(info_refs, HkdfLen(length))
+            .map_err(|e| anyhow::anyhow!("HKDF expand failed: {e}"))?;
+
+        let mut out = vec![0u8; length];
+        okm.fill(&mut out)
+            .map_err(|e| anyhow::anyhow!("HKDF fill failed: {e}"))?;
+
+        Ok(out)
+    }
+
+    /// AES-ECB encrypt a single 16-byte block (for header protection).
+    fn aes_ecb_encrypt(key: &[u8; 16], input: &[u8]) -> Result<[u8; 16]> {
+        use aws_lc_rs::cipher::{PaddedBlockEncryptingKey, UnboundCipherKey, AES_128};
+
+        let cipher_key = UnboundCipherKey::new(&AES_128, key)
+            .map_err(|e| anyhow::anyhow!("AES key error: {e}"))?;
+        let encrypting_key = PaddedBlockEncryptingKey::ecb_pkcs7(cipher_key)
+            .map_err(|e| anyhow::anyhow!("ECB key error: {e}"))?;
+
+        // ECB+PKCS7 on 16 bytes produces 32 bytes (16 data + 16 padding block).
+        // We only need the first 16 bytes (one encrypted block).
+        let mut block = input[..16].to_vec();
+        encrypting_key
+            .encrypt(&mut block)
+            .map_err(|e| anyhow::anyhow!("AES-ECB encrypt failed: {e}"))?;
+
+        let mut result = [0u8; 16];
+        result.copy_from_slice(&block[..16]);
+        Ok(result)
+    }
+
+    /// Read a QUIC variable-length integer. Returns (value, bytes_consumed).
+    fn read_varint(data: &[u8]) -> Option<(u64, usize)> {
+        if data.is_empty() {
+            return None;
+        }
+
+        let first = data[0];
+        let prefix = first >> 6;
+
+        match prefix {
+            0 => Some((first as u64 & 0x3F, 1)),
+            1 => {
+                if data.len() < 2 {
+                    return None;
+                }
+                let val = ((data[0] as u64 & 0x3F) << 8) | data[1] as u64;
+                Some((val, 2))
+            }
+            2 => {
+                if data.len() < 4 {
+                    return None;
+                }
+                let val = ((data[0] as u64 & 0x3F) << 24)
+                    | ((data[1] as u64) << 16)
+                    | ((data[2] as u64) << 8)
+                    | data[3] as u64;
+                Some((val, 4))
+            }
+            3 => {
+                if data.len() < 8 {
+                    return None;
+                }
+                let val = ((data[0] as u64 & 0x3F) << 56)
+                    | ((data[1] as u64) << 48)
+                    | ((data[2] as u64) << 40)
+                    | ((data[3] as u64) << 32)
+                    | ((data[4] as u64) << 24)
+                    | ((data[5] as u64) << 16)
+                    | ((data[6] as u64) << 8)
+                    | data[7] as u64;
+                Some((val, 8))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Extract all CRYPTO frame fragments from decrypted Initial plaintext.
+    fn extract_crypto_fragments(plaintext: &[u8]) -> Result<Vec<CryptoFragment>> {
+        let mut pos = 0;
+        let mut fragments = Vec::new();
+
+        while pos < plaintext.len() {
+            let (frame_type, ft_size) =
+                Self::read_varint(&plaintext[pos..]).unwrap_or((0xFF, 1));
+            pos += ft_size;
+
+            match frame_type {
+                0x00 => continue,
+                0x01 => continue,
+                0x02 | 0x03 => {
+                    // ACK — skip
+                    let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK")?;
+                    pos += s;
+                    let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK")?;
+                    pos += s;
+                    let (range_count, s) = Self::read_varint(&plaintext[pos..]).context("ACK")?;
+                    pos += s;
+                    let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK")?;
+                    pos += s;
+                    for _ in 0..range_count {
+                        let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK")?;
+                        pos += s;
+                        let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK")?;
+                        pos += s;
+                    }
+                    if frame_type == 0x03 {
+                        for _ in 0..3 {
+                            let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK ECN")?;
+                            pos += s;
+                        }
+                    }
+                }
+                0x06 => {
+                    let (offset, s) = Self::read_varint(&plaintext[pos..]).context("CRYPTO offset")?;
+                    pos += s;
+                    let (data_len, s) = Self::read_varint(&plaintext[pos..]).context("CRYPTO len")?;
+                    pos += s;
+                    let data_len = data_len as usize;
+                    if pos + data_len > plaintext.len() {
+                        break;
+                    }
+                    fragments.push(CryptoFragment {
+                        offset,
+                        data: plaintext[pos..pos + data_len].to_vec(),
+                    });
+                    pos += data_len;
+                }
+                _ => break,
+            }
+        }
+
+        Ok(fragments)
+    }
+
+    /// Walk decrypted QUIC frames and extract SNI from a CRYPTO frame.
+    fn extract_sni_from_frames(plaintext: &[u8]) -> Result<String> {
+        let mut pos = 0;
+
+        while pos < plaintext.len() {
+            // Frame type is a varint
+            let (frame_type, ft_size) =
+                Self::read_varint(&plaintext[pos..]).context("failed to read frame type")?;
+            pos += ft_size;
+
+            match frame_type {
+                0x00 => {
+                    // PADDING — skip single byte (already consumed by varint read)
+                    continue;
+                }
+                0x01 => {
+                    // PING — no payload
+                    continue;
+                }
+                0x02 | 0x03 => {
+                    // ACK frame — must parse to skip correctly
+                    // Largest Acknowledged (varint)
+                    let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK largest_ack")?;
+                    pos += s;
+                    // ACK Delay (varint)
+                    let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK delay")?;
+                    pos += s;
+                    // ACK Range Count (varint)
+                    let (range_count, s) =
+                        Self::read_varint(&plaintext[pos..]).context("ACK range_count")?;
+                    pos += s;
+                    // First ACK Range (varint)
+                    let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK first_range")?;
+                    pos += s;
+                    // Additional ACK Ranges: each is Gap(varint) + Range(varint)
+                    for _ in 0..range_count {
+                        let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK gap")?;
+                        pos += s;
+                        let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK range")?;
+                        pos += s;
+                    }
+                    // ACK type 0x03 has ECN counts (3 varints)
+                    if frame_type == 0x03 {
+                        for _ in 0..3 {
+                            let (_, s) = Self::read_varint(&plaintext[pos..]).context("ACK ECN")?;
+                            pos += s;
+                        }
+                    }
+                }
+                0x06 => {
+                    // CRYPTO frame: offset(varint) + length(varint) + data
+                    let (_, offset_size) = Self::read_varint(&plaintext[pos..])
+                        .context("failed to read CRYPTO offset")?;
+                    pos += offset_size;
+
+                    let (data_len, data_len_size) = Self::read_varint(&plaintext[pos..])
+                        .context("failed to read CRYPTO data length")?;
+                    pos += data_len_size;
+
+                    let data_len = data_len as usize;
+                    if pos + data_len > plaintext.len() {
+                        bail!("CRYPTO frame data extends past plaintext");
+                    }
+
+                    let crypto_data = &plaintext[pos..pos + data_len];
+                    if let Some(sni) = SniParser::extract_sni(crypto_data) {
+                        return Ok(sni);
+                    }
+
+                    pos += data_len;
+                }
+                0x1c | 0x1d => {
+                    // CONNECTION_CLOSE — reason_phrase_length(varint) + reason
+                    let (_, s) = Self::read_varint(&plaintext[pos..]).context("CC error_code")?;
+                    pos += s;
+                    if frame_type == 0x1c {
+                        let (_, s) = Self::read_varint(&plaintext[pos..]).context("CC frame_type")?;
+                        pos += s;
+                    }
+                    let (reason_len, s) =
+                        Self::read_varint(&plaintext[pos..]).context("CC reason_len")?;
+                    pos += s;
+                    pos += reason_len as usize;
+                }
+                _ => {
+                    // Unknown frame — can't safely skip, stop parsing
+                    tracing::debug!(frame_type, pos, "unknown frame type, stopping parse");
+                    break;
+                }
+            }
+        }
+
+        bail!("no CRYPTO frame with SNI found in Initial packet")
     }
 }
 
@@ -249,84 +537,6 @@ pub struct CryptoFragment {
     pub data: Vec<u8>,
 }
 
-/// Derive Initial client keys from DCID (RFC 9001 §5.2)
-fn derive_initial_keys(
-    salt: &[u8; 20],
-    dcid: &[u8],
-    version: u32,
-) -> Result<([u8; 16], [u8; 12], [u8; 16])> {
-    let hkdf_salt = Salt::new(HKDF_SHA256, salt);
-    let initial_secret = hkdf_salt.extract(dcid);
-
-    let client_label = match version {
-        0x6b3343cf => "client in",
-        _ => "client in",
-    };
-
-    let client_initial_secret = hkdf_expand_label_raw(&initial_secret, client_label, &[], 32)?;
-
-    // Re-import client_initial_secret as PRK for further expansion
-    let client_prk = hkdf::Prk::new_less_safe(HKDF_SHA256, &client_initial_secret);
-
-    let key_label = "quic key";
-    let iv_label = "quic iv";
-    let hp_label = "quic hp";
-
-    let key = hkdf_expand_label(&client_prk, key_label, &[], 16)?;
-    let iv = hkdf_expand_label(&client_prk, iv_label, &[], 12)?;
-    let hp = hkdf_expand_label(&client_prk, hp_label, &[], 16)?;
-
-    let mut key_bytes = [0u8; 16];
-    let mut iv_bytes = [0u8; 12];
-    let mut hp_bytes = [0u8; 16];
-    key_bytes.copy_from_slice(&key);
-    iv_bytes.copy_from_slice(&iv);
-    hp_bytes.copy_from_slice(&hp);
-
-    Ok((key_bytes, iv_bytes, hp_bytes))
-}
-
-/// HKDF-Expand-Label as defined in TLS 1.3 (RFC 8446 §7.1)
-///
-/// Constructs: HkdfLabel = length(2) || "tls13 " || label || context
-fn hkdf_expand_label_raw(
-    secret: &hkdf::Prk,
-    label: &str,
-    context: &[u8],
-    length: usize,
-) -> Result<Vec<u8>> {
-    hkdf_expand_label(secret, label, context, length)
-}
-
-fn hkdf_expand_label(
-    prk: &hkdf::Prk,
-    label: &str,
-    context: &[u8],
-    length: usize,
-) -> Result<Vec<u8>> {
-    // Build HkdfLabel structure
-    let full_label = format!("tls13 {label}");
-    let full_label_bytes = full_label.as_bytes();
-
-    let mut info = Vec::with_capacity(2 + 1 + full_label_bytes.len() + 1 + context.len());
-    info.push((length >> 8) as u8);
-    info.push((length & 0xFF) as u8);
-    info.push(full_label_bytes.len() as u8);
-    info.extend_from_slice(full_label_bytes);
-    info.push(context.len() as u8);
-    info.extend_from_slice(context);
-
-    let info_refs: &[&[u8]] = &[&info];
-    let okm = prk
-        .expand(info_refs, HkdfLen(length))
-        .map_err(|e| anyhow::anyhow!("HKDF expand failed: {e}"))?;
-
-    let mut out = vec![0u8; length];
-    okm.fill(&mut out)
-        .map_err(|e| anyhow::anyhow!("HKDF fill failed: {e}"))?;
-
-    Ok(out)
-}
 
 /// Custom length type for HKDF output.
 #[derive(Debug)]
@@ -338,225 +548,6 @@ impl hkdf::KeyType for HkdfLen {
     }
 }
 
-/// AES-ECB encrypt a single 16-byte block (for header protection).
-fn aes_ecb_encrypt(key: &[u8; 16], input: &[u8]) -> Result<[u8; 16]> {
-    use aws_lc_rs::cipher::{PaddedBlockEncryptingKey, UnboundCipherKey, AES_128};
-
-    let cipher_key = UnboundCipherKey::new(&AES_128, key)
-        .map_err(|e| anyhow::anyhow!("AES key error: {e}"))?;
-    let encrypting_key = PaddedBlockEncryptingKey::ecb_pkcs7(cipher_key)
-        .map_err(|e| anyhow::anyhow!("ECB key error: {e}"))?;
-
-    // ECB+PKCS7 on 16 bytes produces 32 bytes (16 data + 16 padding block).
-    // We only need the first 16 bytes (one encrypted block).
-    let mut block = input[..16].to_vec();
-    encrypting_key
-        .encrypt(&mut block)
-        .map_err(|e| anyhow::anyhow!("AES-ECB encrypt failed: {e}"))?;
-
-    let mut result = [0u8; 16];
-    result.copy_from_slice(&block[..16]);
-    Ok(result)
-}
-
-/// Read a QUIC variable-length integer. Returns (value, bytes_consumed).
-fn read_varint(data: &[u8]) -> Option<(u64, usize)> {
-    if data.is_empty() {
-        return None;
-    }
-
-    let first = data[0];
-    let prefix = first >> 6;
-
-    match prefix {
-        0 => Some((first as u64 & 0x3F, 1)),
-        1 => {
-            if data.len() < 2 {
-                return None;
-            }
-            let val = ((data[0] as u64 & 0x3F) << 8) | data[1] as u64;
-            Some((val, 2))
-        }
-        2 => {
-            if data.len() < 4 {
-                return None;
-            }
-            let val = ((data[0] as u64 & 0x3F) << 24)
-                | ((data[1] as u64) << 16)
-                | ((data[2] as u64) << 8)
-                | data[3] as u64;
-            Some((val, 4))
-        }
-        3 => {
-            if data.len() < 8 {
-                return None;
-            }
-            let val = ((data[0] as u64 & 0x3F) << 56)
-                | ((data[1] as u64) << 48)
-                | ((data[2] as u64) << 40)
-                | ((data[3] as u64) << 32)
-                | ((data[4] as u64) << 24)
-                | ((data[5] as u64) << 16)
-                | ((data[6] as u64) << 8)
-                | data[7] as u64;
-            Some((val, 8))
-        }
-        _ => unreachable!(),
-    }
-}
-
-/// Extract all CRYPTO frame fragments from decrypted Initial plaintext.
-fn extract_crypto_fragments(plaintext: &[u8]) -> Result<Vec<CryptoFragment>> {
-    let mut pos = 0;
-    let mut fragments = Vec::new();
-
-    while pos < plaintext.len() {
-        let (frame_type, ft_size) =
-            read_varint(&plaintext[pos..]).unwrap_or((0xFF, 1));
-        pos += ft_size;
-
-        match frame_type {
-            0x00 => continue,
-            0x01 => continue,
-            0x02 | 0x03 => {
-                // ACK — skip
-                let (_, s) = read_varint(&plaintext[pos..]).context("ACK")?;
-                pos += s;
-                let (_, s) = read_varint(&plaintext[pos..]).context("ACK")?;
-                pos += s;
-                let (range_count, s) = read_varint(&plaintext[pos..]).context("ACK")?;
-                pos += s;
-                let (_, s) = read_varint(&plaintext[pos..]).context("ACK")?;
-                pos += s;
-                for _ in 0..range_count {
-                    let (_, s) = read_varint(&plaintext[pos..]).context("ACK")?;
-                    pos += s;
-                    let (_, s) = read_varint(&plaintext[pos..]).context("ACK")?;
-                    pos += s;
-                }
-                if frame_type == 0x03 {
-                    for _ in 0..3 {
-                        let (_, s) = read_varint(&plaintext[pos..]).context("ACK ECN")?;
-                        pos += s;
-                    }
-                }
-            }
-            0x06 => {
-                let (offset, s) = read_varint(&plaintext[pos..]).context("CRYPTO offset")?;
-                pos += s;
-                let (data_len, s) = read_varint(&plaintext[pos..]).context("CRYPTO len")?;
-                pos += s;
-                let data_len = data_len as usize;
-                if pos + data_len > plaintext.len() {
-                    break;
-                }
-                fragments.push(CryptoFragment {
-                    offset,
-                    data: plaintext[pos..pos + data_len].to_vec(),
-                });
-                pos += data_len;
-            }
-            _ => break,
-        }
-    }
-
-    Ok(fragments)
-}
-
-/// Walk decrypted QUIC frames and extract SNI from a CRYPTO frame.
-fn extract_sni_from_frames(plaintext: &[u8]) -> Result<String> {
-    let mut pos = 0;
-
-    while pos < plaintext.len() {
-        // Frame type is a varint
-        let (frame_type, ft_size) =
-            read_varint(&plaintext[pos..]).context("failed to read frame type")?;
-        pos += ft_size;
-
-        match frame_type {
-            0x00 => {
-                // PADDING — skip single byte (already consumed by varint read)
-                continue;
-            }
-            0x01 => {
-                // PING — no payload
-                continue;
-            }
-            0x02 | 0x03 => {
-                // ACK frame — must parse to skip correctly
-                // Largest Acknowledged (varint)
-                let (_, s) = read_varint(&plaintext[pos..]).context("ACK largest_ack")?;
-                pos += s;
-                // ACK Delay (varint)
-                let (_, s) = read_varint(&plaintext[pos..]).context("ACK delay")?;
-                pos += s;
-                // ACK Range Count (varint)
-                let (range_count, s) =
-                    read_varint(&plaintext[pos..]).context("ACK range_count")?;
-                pos += s;
-                // First ACK Range (varint)
-                let (_, s) = read_varint(&plaintext[pos..]).context("ACK first_range")?;
-                pos += s;
-                // Additional ACK Ranges: each is Gap(varint) + Range(varint)
-                for _ in 0..range_count {
-                    let (_, s) = read_varint(&plaintext[pos..]).context("ACK gap")?;
-                    pos += s;
-                    let (_, s) = read_varint(&plaintext[pos..]).context("ACK range")?;
-                    pos += s;
-                }
-                // ACK type 0x03 has ECN counts (3 varints)
-                if frame_type == 0x03 {
-                    for _ in 0..3 {
-                        let (_, s) = read_varint(&plaintext[pos..]).context("ACK ECN")?;
-                        pos += s;
-                    }
-                }
-            }
-            0x06 => {
-                // CRYPTO frame: offset(varint) + length(varint) + data
-                let (_, offset_size) = read_varint(&plaintext[pos..])
-                    .context("failed to read CRYPTO offset")?;
-                pos += offset_size;
-
-                let (data_len, data_len_size) = read_varint(&plaintext[pos..])
-                    .context("failed to read CRYPTO data length")?;
-                pos += data_len_size;
-
-                let data_len = data_len as usize;
-                if pos + data_len > plaintext.len() {
-                    bail!("CRYPTO frame data extends past plaintext");
-                }
-
-                let crypto_data = &plaintext[pos..pos + data_len];
-                if let Some(sni) = SniParser::extract_sni(crypto_data) {
-                    return Ok(sni);
-                }
-
-                pos += data_len;
-            }
-            0x1c | 0x1d => {
-                // CONNECTION_CLOSE — reason_phrase_length(varint) + reason
-                let (_, s) = read_varint(&plaintext[pos..]).context("CC error_code")?;
-                pos += s;
-                if frame_type == 0x1c {
-                    let (_, s) = read_varint(&plaintext[pos..]).context("CC frame_type")?;
-                    pos += s;
-                }
-                let (reason_len, s) =
-                    read_varint(&plaintext[pos..]).context("CC reason_len")?;
-                pos += s;
-                pos += reason_len as usize;
-            }
-            _ => {
-                // Unknown frame — can't safely skip, stop parsing
-                tracing::debug!(frame_type, pos, "unknown frame type, stopping parse");
-                break;
-            }
-        }
-    }
-
-    bail!("no CRYPTO frame with SNI found in Initial packet")
-}
 
 #[cfg(test)]
 mod tests {
@@ -565,19 +556,19 @@ mod tests {
     #[test]
     fn test_read_varint() {
         // 1-byte: value 37 (0x25)
-        assert_eq!(read_varint(&[0x25]), Some((37, 1)));
+        assert_eq!(QuicInitialDecryptor::read_varint(&[0x25]), Some((37, 1)));
 
         // 2-byte: value 15293 (0x7bbd)
-        assert_eq!(read_varint(&[0x7b, 0xbd]), Some((15293, 2)));
+        assert_eq!(QuicInitialDecryptor::read_varint(&[0x7b, 0xbd]), Some((15293, 2)));
 
         // 4-byte: value 494878333 (0x9d7f3e7d)
         assert_eq!(
-            read_varint(&[0x9d, 0x7f, 0x3e, 0x7d]),
+            QuicInitialDecryptor::read_varint(&[0x9d, 0x7f, 0x3e, 0x7d]),
             Some((494878333, 4))
         );
 
         // Empty
-        assert_eq!(read_varint(&[]), None);
+        assert_eq!(QuicInitialDecryptor::read_varint(&[]), None);
     }
 
     #[test]
@@ -591,7 +582,7 @@ mod tests {
         let initial_secret = salt.extract(&dcid);
 
         // client_initial_secret
-        let client_secret = hkdf_expand_label_raw(&initial_secret, "client in", &[], 32).unwrap();
+        let client_secret = QuicInitialDecryptor::hkdf_expand_label(&initial_secret, "client in", &[], 32).unwrap();
 
         assert_eq!(
             bytes_to_hex(&client_secret),
@@ -601,13 +592,13 @@ mod tests {
         // Derive key, iv, hp from client_initial_secret
         let client_prk = hkdf::Prk::new_less_safe(HKDF_SHA256, &client_secret);
 
-        let key = hkdf_expand_label(&client_prk, "quic key", &[], 16).unwrap();
+        let key = QuicInitialDecryptor::hkdf_expand_label(&client_prk, "quic key", &[], 16).unwrap();
         assert_eq!(bytes_to_hex(&key), "1f369613dd76d5467730efcbe3b1a22d");
 
-        let iv = hkdf_expand_label(&client_prk, "quic iv", &[], 12).unwrap();
+        let iv = QuicInitialDecryptor::hkdf_expand_label(&client_prk, "quic iv", &[], 12).unwrap();
         assert_eq!(bytes_to_hex(&iv), "fa044b2f42a3fd3b46fb255c");
 
-        let hp = hkdf_expand_label(&client_prk, "quic hp", &[], 16).unwrap();
+        let hp = QuicInitialDecryptor::hkdf_expand_label(&client_prk, "quic hp", &[], 16).unwrap();
         assert_eq!(bytes_to_hex(&hp), "9f50449e04a0e810283a1e9933adedd2");
     }
 
@@ -620,7 +611,7 @@ mod tests {
         let hp_key: [u8; 16] = hex_to_bytes_fixed("9f50449e04a0e810283a1e9933adedd2");
         let sample = hex_to_bytes("d1b1c98dd7689fb8ec11d242b123dc9b");
 
-        let mask = aes_ecb_encrypt(&hp_key, &sample).unwrap();
+        let mask = QuicInitialDecryptor::aes_ecb_encrypt(&hp_key, &sample).unwrap();
         assert_eq!(bytes_to_hex(&mask[..5]), "437b9aec36");
     }
 

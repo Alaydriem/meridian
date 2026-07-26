@@ -1,3 +1,7 @@
+// Shared across several test binaries, each of which uses a different subset of
+// these helpers.
+#![allow(dead_code)]
+
 use std::io;
 
 use rcgen::{CertificateParams, CertifiedIssuer, KeyPair};

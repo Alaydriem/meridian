@@ -5,6 +5,10 @@ pub mod api;
 #[cfg(feature = "server")]
 pub mod config;
 #[cfg(feature = "server")]
+pub mod gossip;
+#[cfg(feature = "server")]
+pub mod health;
+#[cfg(feature = "server")]
 mod meridian;
 #[cfg(feature = "server")]
 mod meridian_builder;

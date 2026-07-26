@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
+use crate::health::DatapathHealth;
 use crate::routing::RoutingTable;
 
 use super::worker_pool::WorkerPool;
@@ -21,6 +22,7 @@ pub enum UdpBackend {
 
 pub struct UdpRouter {
     pool: WorkerPool,
+    health: Arc<DatapathHealth>,
     #[cfg(feature = "io-uring")]
     uring_pool: Option<super::uring::UringWorkerPool>,
     backend: UdpBackend,
@@ -34,6 +36,7 @@ impl UdpRouter {
         connection_ttl: Duration,
         workers: usize,
         backend: UdpBackend,
+        health: Arc<DatapathHealth>,
     ) -> Self {
         let pool = WorkerPool::new(
             routing_table.clone(),
@@ -41,6 +44,7 @@ impl UdpRouter {
             workers,
             cid_prefix_length,
             connection_ttl,
+            health.clone(),
         );
 
         #[cfg(feature = "io-uring")]
@@ -58,10 +62,16 @@ impl UdpRouter {
 
         Self {
             pool,
+            health,
             #[cfg(feature = "io-uring")]
             uring_pool,
             backend,
         }
+    }
+
+    /// Shared datapath health, for the control plane to serve readiness from.
+    pub fn health(&self) -> Arc<DatapathHealth> {
+        self.health.clone()
     }
 
     pub async fn run(&self, shutdown: CancellationToken) -> Result<()> {
