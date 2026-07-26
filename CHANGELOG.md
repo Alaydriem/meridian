@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/Alaydriem/meridian/compare/v1.1.0...v1.2.0) (2026-07-26)
+
+
+### Features
+
+* fleet mode, correct SNI handling, and QUIC path conservation ([#5](https://github.com/Alaydriem/meridian/issues/5)) ([49c2d44](https://github.com/Alaydriem/meridian/commit/49c2d444731b4413c4a8a80b4b9c6bbd5b29710a))
+
 # [1.1.0](https://github.com/Alaydriem/meridian/compare/v1.0.0...v1.1.0) (2026-03-19)
 
 
