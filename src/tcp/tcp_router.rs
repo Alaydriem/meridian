@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::routing::RoutingTable;
 use crate::tls::TlsAlert;
+use crate::udp::SocketFactory;
 
 /// Deadline for reading a complete ClientHello.
 ///
@@ -63,7 +64,10 @@ impl TcpRouter {
     }
 
     pub async fn run(&self, shutdown: CancellationToken) -> Result<()> {
-        let listener = TcpListener::bind(&self.listen_addr).await?;
+        // Bound through SocketFactory rather than `TcpListener::bind` so a wildcard IPv6
+        // listen address means the same thing here as it does for QUIC. Both routers are
+        // handed the same `config.listen`.
+        let listener = TcpListener::from_std(SocketFactory::bind_tcp_listener(&self.listen_addr)?)?;
         tracing::info!(addr = %self.listen_addr, "tcp router listening");
 
         loop {

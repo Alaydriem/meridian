@@ -50,6 +50,25 @@ impl EphemeralSocketManager {
         })
     }
 
+    /// The local wildcard a backend-facing socket must bind to reach `backend_addr`.
+    ///
+    /// The family has to match: a socket bound to `0.0.0.0` cannot `connect` to an
+    /// IPv6 address, so hardcoding the IPv4 wildcard made an IPv6 backend unreachable.
+    ///
+    /// Unlike the ingress listener, this socket is connected to exactly one backend, so
+    /// it never has to serve both families at once — matching is enough, and no
+    /// IPV6_V6ONLY handling is needed.
+    fn wildcard_for(backend_addr: SocketAddr) -> SocketAddr {
+        match backend_addr {
+            SocketAddr::V4(_) => {
+                SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+            }
+            SocketAddr::V6(_) => {
+                SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0)
+            }
+        }
+    }
+
     /// Get or create the backend-facing socket for a client connection.
     ///
     /// Supplying `dcid` is what makes a NAT rebind free: the address changed but the
@@ -87,7 +106,7 @@ impl EphemeralSocketManager {
 
         // Bind and connect are await points, so several callers for one client can
         // reach here at once.
-        let candidate = UdpSocket::bind("0.0.0.0:0").await?;
+        let candidate = UdpSocket::bind(Self::wildcard_for(backend_addr)).await?;
         candidate.connect(backend_addr).await?;
         let candidate = Arc::new(candidate);
 

@@ -14,6 +14,8 @@ mod worker_pool;
 #[cfg(feature = "io-uring")]
 mod uring;
 
+pub use ephemeral_socket_manager::EphemeralSocketManager;
 pub use initial_decryptor::QuicInitialDecryptor;
+pub use socket_factory::SocketFactory;
 pub use udp_router::{UdpBackend, UdpRouter};
 pub use udp_router_builder::UdpRouterBuilder;
