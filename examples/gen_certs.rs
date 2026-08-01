@@ -16,10 +16,8 @@ fn main() -> anyhow::Result<()> {
 
     // API server cert (for Meridian control plane)
     let api_key = KeyPair::generate()?;
-    let api_params = CertificateParams::new(vec![
-        "localhost".to_string(),
-        "127.0.0.1".to_string(),
-    ])?;
+    let api_params =
+        CertificateParams::new(vec!["localhost".to_string(), "127.0.0.1".to_string()])?;
     let api_cert = api_params.signed_by(&api_key, &*ca)?;
     fs::write(certs_dir.join("api-cert.pem"), api_cert.pem())?;
     fs::write(certs_dir.join("api-key.pem"), api_key.serialize_pem())?;

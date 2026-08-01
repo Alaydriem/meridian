@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -8,7 +8,10 @@ use clap::Parser;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Parser)]
-#[command(name = "throughput", about = "High-throughput QUIC test for Meridian proxy")]
+#[command(
+    name = "throughput",
+    about = "High-throughput QUIC test for Meridian proxy"
+)]
 struct Cli {
     /// Proxy address
     #[arg(long, default_value = "127.0.0.1:4433")]
@@ -86,8 +89,17 @@ async fn main() -> Result<()> {
             // Stagger connection attempts to avoid handshake burst
             tokio::time::sleep(Duration::from_millis(idx as u64 * 100)).await;
             if let Err(e) = run_client(
-                idx, &proxy, &sni, &quic_ca, frame_size, test_duration, interval,
-                sent, recv, errors, latency,
+                idx,
+                &proxy,
+                &sni,
+                &quic_ca,
+                frame_size,
+                test_duration,
+                interval,
+                sent,
+                recv,
+                errors,
+                latency,
             )
             .await
             {
@@ -104,8 +116,14 @@ async fn main() -> Result<()> {
 
         handles.push(tokio::spawn(async move {
             run_https_load(
-                idx, &proxy, &sni, &https_ca, test_duration,
-                &a_sent, &a_ok, &a_err,
+                idx,
+                &proxy,
+                &sni,
+                &https_ca,
+                test_duration,
+                &a_sent,
+                &a_ok,
+                &a_err,
             )
             .await;
         }));
@@ -120,7 +138,11 @@ async fn main() -> Result<()> {
     let received = total_recv.load(Ordering::Relaxed);
     let errs = total_errors.load(Ordering::Relaxed);
     let total_lat = total_latency_us.load(Ordering::Relaxed);
-    let avg_lat_us = if received > 0 { total_lat / received } else { 0 };
+    let avg_lat_us = if received > 0 {
+        total_lat / received
+    } else {
+        0
+    };
     let h_sent = api_sent.load(Ordering::Relaxed);
     let h_ok = api_ok.load(Ordering::Relaxed);
     let h_err = api_err.load(Ordering::Relaxed);
@@ -232,16 +254,13 @@ async fn run_client(
     let read_handle = handle.clone();
     let reader = tokio::spawn(async move {
         loop {
-            let datagram = read_handle.datagram_mut(|recv: &mut Receiver| {
-                recv.recv_datagram()
-            });
+            let datagram = read_handle.datagram_mut(|recv: &mut Receiver| recv.recv_datagram());
 
             match datagram {
                 Ok(Some(data)) => {
                     // Response: [2-byte id][8-byte seq][8-byte timestamp][padding]
                     if data.len() >= 2 + 16 {
-                        let ts_bytes: [u8; 8] =
-                            data[2 + 8..2 + 16].try_into().unwrap_or([0; 8]);
+                        let ts_bytes: [u8; 8] = data[2 + 8..2 + 16].try_into().unwrap_or([0; 8]);
                         let send_time_us = u64::from_be_bytes(ts_bytes);
                         let now_us = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)

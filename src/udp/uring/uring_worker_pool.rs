@@ -188,9 +188,10 @@ mod tests {
         // Stands in for a ring worker thread that panics, mirroring the reporting
         // wrapper in `run`.
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                || -> Result<()> { panic!("ring worker died") },
-            ));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+                    panic!("ring worker died")
+                }));
             let exit = match &result {
                 Ok(Ok(())) => WorkerExit::Clean,
                 Ok(Err(_)) => WorkerExit::Failed,

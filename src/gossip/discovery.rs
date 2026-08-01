@@ -58,7 +58,8 @@ mod tests {
         .await;
 
         if let Some(&first) = all.first() {
-            let filtered = PeerDiscovery::resolve_peers(&["localhost:7946".to_string()], first).await;
+            let filtered =
+                PeerDiscovery::resolve_peers(&["localhost:7946".to_string()], first).await;
             assert!(
                 !filtered.contains(&first),
                 "an instance must not gossip with itself"

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use foca::{Foca, Notification, Timer};
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -294,8 +294,14 @@ mod tests {
         let shutdown = CancellationToken::new();
 
         // Each points at the other.
-        let a = provider(&format!("127.0.0.1:{port_a}"), vec![format!("127.0.0.1:{port_b}")]);
-        let b = provider(&format!("127.0.0.1:{port_b}"), vec![format!("127.0.0.1:{port_a}")]);
+        let a = provider(
+            &format!("127.0.0.1:{port_a}"),
+            vec![format!("127.0.0.1:{port_b}")],
+        );
+        let b = provider(
+            &format!("127.0.0.1:{port_b}"),
+            vec![format!("127.0.0.1:{port_a}")],
+        );
 
         {
             let (t, sd) = (table_a.clone(), shutdown.clone());

@@ -27,15 +27,11 @@ impl UringProbe {
             .context("failed to probe io_uring capabilities")?;
 
         if !probe.is_supported(io_uring::opcode::RecvMsg::CODE) {
-            anyhow::bail!(
-                "kernel does not support IORING_OP_RECVMSG (requires kernel 5.3+)"
-            );
+            anyhow::bail!("kernel does not support IORING_OP_RECVMSG (requires kernel 5.3+)");
         }
 
         if !probe.is_supported(io_uring::opcode::SendMsg::CODE) {
-            anyhow::bail!(
-                "kernel does not support IORING_OP_SENDMSG (requires kernel 5.3+)"
-            );
+            anyhow::bail!("kernel does not support IORING_OP_SENDMSG (requires kernel 5.3+)");
         }
 
         // Check for RecvMsgMulti — it shares the same opcode as RecvMsg but
@@ -58,8 +54,7 @@ impl UringProbe {
 
     /// Parse the kernel version from uname and check it meets the minimum.
     fn check_kernel_version(min_major: u32, min_minor: u32) -> Result<()> {
-        let uname = Self::rustix_uname()
-            .context("failed to get kernel version")?;
+        let uname = Self::rustix_uname().context("failed to get kernel version")?;
 
         let version_str = uname.trim();
         let parts: Vec<&str> = version_str.split('.').collect();

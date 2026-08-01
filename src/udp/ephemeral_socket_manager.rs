@@ -50,6 +50,25 @@ impl EphemeralSocketManager {
         })
     }
 
+    /// The local wildcard a backend-facing socket must bind to reach `backend_addr`.
+    ///
+    /// The family has to match: a socket bound to `0.0.0.0` cannot `connect` to an
+    /// IPv6 address, so hardcoding the IPv4 wildcard made an IPv6 backend unreachable.
+    ///
+    /// Unlike the ingress listener, this socket is connected to exactly one backend, so
+    /// it never has to serve both families at once — matching is enough, and no
+    /// IPV6_V6ONLY handling is needed.
+    fn wildcard_for(backend_addr: SocketAddr) -> SocketAddr {
+        match backend_addr {
+            SocketAddr::V4(_) => {
+                SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+            }
+            SocketAddr::V6(_) => {
+                SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0)
+            }
+        }
+    }
+
     /// Get or create the backend-facing socket for a client connection.
     ///
     /// Supplying `dcid` is what makes a NAT rebind free: the address changed but the
@@ -87,7 +106,7 @@ impl EphemeralSocketManager {
 
         // Bind and connect are await points, so several callers for one client can
         // reach here at once.
-        let candidate = UdpSocket::bind("0.0.0.0:0").await?;
+        let candidate = UdpSocket::bind(Self::wildcard_for(backend_addr)).await?;
         candidate.connect(backend_addr).await?;
         let candidate = Arc::new(candidate);
 
@@ -98,7 +117,8 @@ impl EphemeralSocketManager {
         // Publish the entry *before* claiming the address index, so that "id present
         // in by_client_addr" implies "entry present in sockets". The other order lets
         // a loser find the winner's id with no entry behind it.
-        let entry = EphemeralSocket::new(candidate.clone(), client_addr, cancel.clone(), self.epoch);
+        let entry =
+            EphemeralSocket::new(candidate.clone(), client_addr, cancel.clone(), self.epoch);
         let liveness = entry.liveness.clone();
         let target = entry.target.clone();
         self.sockets.insert(id, entry);
@@ -273,6 +293,15 @@ impl EphemeralSocketManager {
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.sockets.len()
+    }
+
+    /// Whether any ephemeral socket is live.
+    ///
+    /// Companion to [`Self::len`]. `clippy::len_without_is_empty` requires the pair on
+    /// a public type, and this type became public to give the tests a seam.
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.sockets.is_empty()
     }
 
     /// Size of the DCID index. Guards against an index leak across CID rotations.

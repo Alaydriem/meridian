@@ -127,19 +127,19 @@ impl BackendService {
         udp_addr: &str,
         instance_id: u16,
     ) -> Result<Backend, ApiError> {
-        let tcp = AddressResolver::resolve_addr(tcp_addr)
-            .await
-            .map_err(|e| ApiError::InvalidAddress {
+        let tcp = AddressResolver::resolve_addr(tcp_addr).await.map_err(|e| {
+            ApiError::InvalidAddress {
                 field: "tcp_addr",
                 detail: e.to_string(),
-            })?;
+            }
+        })?;
 
-        let udp = AddressResolver::resolve_addr(udp_addr)
-            .await
-            .map_err(|e| ApiError::InvalidAddress {
+        let udp = AddressResolver::resolve_addr(udp_addr).await.map_err(|e| {
+            ApiError::InvalidAddress {
                 field: "udp_addr",
                 detail: e.to_string(),
-            })?;
+            }
+        })?;
 
         Ok(Backend::new(hostname.to_string(), tcp, udp, instance_id).with_lease())
     }

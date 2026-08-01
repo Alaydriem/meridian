@@ -1,0 +1,12 @@
+# Pin the formatting style so `cargo fmt` is reproducible across toolchains.
+#
+# rustfmt defaults `style_edition` to 2015 regardless of the crate's Rust edition, and
+# `cargo fmt` then derives it from `edition = "2024"` in Cargo.toml. That indirection is
+# what let formatting drift: the result depended on how a given rustfmt version resolved
+# it, so `cargo fmt` proposed a whole-repo rewrite on a newer toolchain than the one the
+# code was last formatted with. Stating it here removes the guesswork.
+#
+# 2024 style sorts `use` items with lowercase after uppercase within a group
+# (`s2n_quic::provider::event::{ConnectionInfo, Subscriber, events}`), which is the most
+# visible difference from earlier style editions.
+style_edition = "2024"

@@ -195,12 +195,9 @@ async fn unknown_sni_receives_a_tls_alert_not_a_reset() -> Result<()> {
     let mut client = send_split(proxy_port, &hello, 1460).await?;
 
     let mut response = Vec::new();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        client.read_to_end(&mut response),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("proxy neither answered nor closed"))??;
+    tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut response))
+        .await
+        .map_err(|_| anyhow::anyhow!("proxy neither answered nor closed"))??;
 
     assert_eq!(
         response,

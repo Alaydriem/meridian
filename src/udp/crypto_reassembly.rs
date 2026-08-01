@@ -235,7 +235,9 @@ mod tests {
         let hello = client_hello(32);
         assert!(b.insert(b"dcid", 0, &hello[..20]).is_none());
         assert!(b.insert(b"dcid", 0, &hello[..20]).is_none());
-        let out = b.insert(b"dcid", 10, &hello[10..]).expect("should reassemble");
+        let out = b
+            .insert(b"dcid", 10, &hello[10..])
+            .expect("should reassemble");
         assert_eq!(out, hello);
     }
 

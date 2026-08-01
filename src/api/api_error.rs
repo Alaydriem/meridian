@@ -14,9 +14,10 @@ pub enum ApiError {
 impl ApiError {
     fn parts(self) -> (StatusCode, String) {
         match self {
-            Self::InvalidAddress { field, detail } => {
-                (StatusCode::BAD_REQUEST, format!("invalid {field}: {detail}"))
-            }
+            Self::InvalidAddress { field, detail } => (
+                StatusCode::BAD_REQUEST,
+                format!("invalid {field}: {detail}"),
+            ),
             Self::Conflict(message) => (StatusCode::CONFLICT, message),
             Self::NotFound(message) => (StatusCode::NOT_FOUND, message),
         }

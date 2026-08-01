@@ -1,19 +1,19 @@
-use anyhow::{bail, Context, Result};
-use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_128_GCM};
-use aws_lc_rs::hkdf::{self, Salt, HKDF_SHA256};
+use anyhow::{Context, Result, bail};
+use aws_lc_rs::aead::{AES_128_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+use aws_lc_rs::hkdf::{self, HKDF_SHA256, Salt};
 
 use crate::tls::SniParser;
 
 // QUIC v1 (RFC 9001) Initial salt
 const QUIC_V1_SALT: [u8; 20] = [
-    0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c,
-    0xad, 0xcc, 0xbb, 0x7f, 0x0a,
+    0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad,
+    0xcc, 0xbb, 0x7f, 0x0a,
 ];
 
 // QUIC v2 (RFC 9369) Initial salt
 const QUIC_V2_SALT: [u8; 20] = [
-    0x0d, 0xed, 0xe3, 0xde, 0xf7, 0x00, 0xa6, 0xdb, 0x81, 0x93, 0x81, 0xbe, 0x6e, 0x26, 0x9d,
-    0xcb, 0xf9, 0xbd, 0x2e, 0xd9,
+    0x0d, 0xed, 0xe3, 0xde, 0xf7, 0x00, 0xa6, 0xdb, 0x81, 0x93, 0x81, 0xbe, 0x6e, 0x26, 0x9d, 0xcb,
+    0xf9, 0xbd, 0x2e, 0xd9,
 ];
 
 pub struct QuicInitialDecryptor;
@@ -132,8 +132,8 @@ impl QuicInitialDecryptor {
         // Decrypt
         let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes)
             .map_err(|e| anyhow::anyhow!("nonce error: {e}"))?;
-        let unbound_key = UnboundKey::new(&AES_128_GCM, &key)
-            .map_err(|e| anyhow::anyhow!("key error: {e}"))?;
+        let unbound_key =
+            UnboundKey::new(&AES_128_GCM, &key).map_err(|e| anyhow::anyhow!("key error: {e}"))?;
         let less_safe_key = LessSafeKey::new(unbound_key);
         let plaintext = less_safe_key
             .open_in_place(nonce, Aad::from(aad), &mut ciphertext)
@@ -312,7 +312,7 @@ impl QuicInitialDecryptor {
 
     /// AES-ECB encrypt a single 16-byte block (for header protection).
     fn aes_ecb_encrypt(key: &[u8; 16], input: &[u8]) -> Result<[u8; 16]> {
-        use aws_lc_rs::cipher::{PaddedBlockEncryptingKey, UnboundCipherKey, AES_128};
+        use aws_lc_rs::cipher::{AES_128, PaddedBlockEncryptingKey, UnboundCipherKey};
 
         let cipher_key = UnboundCipherKey::new(&AES_128, key)
             .map_err(|e| anyhow::anyhow!("AES key error: {e}"))?;
@@ -383,8 +383,7 @@ impl QuicInitialDecryptor {
         let mut fragments = Vec::new();
 
         while pos < plaintext.len() {
-            let (frame_type, ft_size) =
-                Self::read_varint(&plaintext[pos..]).unwrap_or((0xFF, 1));
+            let (frame_type, ft_size) = Self::read_varint(&plaintext[pos..]).unwrap_or((0xFF, 1));
             pos += ft_size;
 
             match frame_type {
@@ -414,9 +413,11 @@ impl QuicInitialDecryptor {
                     }
                 }
                 0x06 => {
-                    let (offset, s) = Self::read_varint(&plaintext[pos..]).context("CRYPTO offset")?;
+                    let (offset, s) =
+                        Self::read_varint(&plaintext[pos..]).context("CRYPTO offset")?;
                     pos += s;
-                    let (data_len, s) = Self::read_varint(&plaintext[pos..]).context("CRYPTO len")?;
+                    let (data_len, s) =
+                        Self::read_varint(&plaintext[pos..]).context("CRYPTO len")?;
                     pos += s;
                     let data_len = data_len as usize;
                     if pos + data_len > plaintext.len() {
@@ -511,7 +512,8 @@ impl QuicInitialDecryptor {
                     let (_, s) = Self::read_varint(&plaintext[pos..]).context("CC error_code")?;
                     pos += s;
                     if frame_type == 0x1c {
-                        let (_, s) = Self::read_varint(&plaintext[pos..]).context("CC frame_type")?;
+                        let (_, s) =
+                            Self::read_varint(&plaintext[pos..]).context("CC frame_type")?;
                         pos += s;
                     }
                     let (reason_len, s) =
@@ -537,7 +539,6 @@ pub struct CryptoFragment {
     pub data: Vec<u8>,
 }
 
-
 /// Custom length type for HKDF output.
 #[derive(Debug)]
 struct HkdfLen(usize);
@@ -547,7 +548,6 @@ impl hkdf::KeyType for HkdfLen {
         self.0
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -559,7 +559,10 @@ mod tests {
         assert_eq!(QuicInitialDecryptor::read_varint(&[0x25]), Some((37, 1)));
 
         // 2-byte: value 15293 (0x7bbd)
-        assert_eq!(QuicInitialDecryptor::read_varint(&[0x7b, 0xbd]), Some((15293, 2)));
+        assert_eq!(
+            QuicInitialDecryptor::read_varint(&[0x7b, 0xbd]),
+            Some((15293, 2))
+        );
 
         // 4-byte: value 494878333 (0x9d7f3e7d)
         assert_eq!(
@@ -582,7 +585,8 @@ mod tests {
         let initial_secret = salt.extract(&dcid);
 
         // client_initial_secret
-        let client_secret = QuicInitialDecryptor::hkdf_expand_label(&initial_secret, "client in", &[], 32).unwrap();
+        let client_secret =
+            QuicInitialDecryptor::hkdf_expand_label(&initial_secret, "client in", &[], 32).unwrap();
 
         assert_eq!(
             bytes_to_hex(&client_secret),
@@ -592,7 +596,8 @@ mod tests {
         // Derive key, iv, hp from client_initial_secret
         let client_prk = hkdf::Prk::new_less_safe(HKDF_SHA256, &client_secret);
 
-        let key = QuicInitialDecryptor::hkdf_expand_label(&client_prk, "quic key", &[], 16).unwrap();
+        let key =
+            QuicInitialDecryptor::hkdf_expand_label(&client_prk, "quic key", &[], 16).unwrap();
         assert_eq!(bytes_to_hex(&key), "1f369613dd76d5467730efcbe3b1a22d");
 
         let iv = QuicInitialDecryptor::hkdf_expand_label(&client_prk, "quic iv", &[], 12).unwrap();

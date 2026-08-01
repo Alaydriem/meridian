@@ -2,12 +2,12 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::Router;
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
-use axum::Router;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::ApiConfig;
@@ -88,9 +88,13 @@ impl ControlPlane {
             .with_single_cert(certs, key)
             .context("failed to build TLS config")?;
 
-        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config));
+        let rustls_config =
+            axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config));
 
-        let addr: std::net::SocketAddr = self.config.listen.parse()
+        let addr: std::net::SocketAddr = self
+            .config
+            .listen
+            .parse()
             .with_context(|| format!("invalid API listen address: {}", self.config.listen))?;
 
         tracing::info!(%addr, "control plane listening");
@@ -131,4 +135,3 @@ impl ControlPlane {
         }
     }
 }
-

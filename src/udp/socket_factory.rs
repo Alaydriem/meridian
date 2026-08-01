@@ -1,4 +1,4 @@
-use std::net::UdpSocket as StdUdpSocket;
+use std::net::{TcpListener as StdTcpListener, UdpSocket as StdUdpSocket};
 
 use anyhow::{Context, Result};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -31,6 +31,74 @@ impl SocketFactory {
         }
     }
 
+    /// Clear IPV6_V6ONLY on a wildcard IPv6 socket so IPv4 clients still reach it,
+    /// arriving as v4-mapped addresses.
+    ///
+    /// Left to the platform this is a coin toss: Linux takes it from the
+    /// `net.ipv6.bindv6only` sysctl (0 by default, but a hardened host or container
+    /// image can set it) and Windows defaults it to enabled. Setting it explicitly is
+    /// what makes `listen = "[::]:443"` mean the same thing everywhere, and it is what
+    /// s2n-quic-platform does on the backend's own sockets.
+    ///
+    /// Only a wildcard address is touched. An operator who names a specific IPv6
+    /// address is asking for IPv6, and forcing dual-stack onto it would be overriding
+    /// a deliberate choice.
+    fn allow_ipv4_on_wildcard_v6(socket: &Socket, addr: &std::net::SocketAddr) -> Result<()> {
+        let is_wildcard_v6 = match addr {
+            std::net::SocketAddr::V6(v6) => v6.ip().is_unspecified(),
+            std::net::SocketAddr::V4(_) => false,
+        };
+
+        if is_wildcard_v6 {
+            socket
+                .set_only_v6(false)
+                .context("failed to clear IPV6_V6ONLY on the wildcard IPv6 listener")?;
+        }
+
+        Ok(())
+    }
+
+    /// Bind the TCP ingress listener, applying the same wildcard-IPv6 policy as the UDP
+    /// path.
+    ///
+    /// `config.listen` feeds both routers, so the two protocols have to agree on what a
+    /// wildcard IPv6 address means. `TcpListener::bind` alone does not agree: it never
+    /// touches IPV6_V6ONLY, so `[::]:443` would serve both families over QUIC and IPv6
+    /// only over TCP on the very same host.
+    ///
+    /// Returns a std listener; the caller adopts it with `TcpListener::from_std`.
+    pub fn bind_tcp_listener(addr: &str) -> Result<StdTcpListener> {
+        let addr: std::net::SocketAddr = addr
+            .parse()
+            .with_context(|| format!("invalid listen address: {addr}"))?;
+
+        let domain = if addr.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        };
+
+        let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
+            .context("failed to create TCP socket")?;
+        socket.set_nonblocking(true)?;
+        // Before bind: the flag is only settable on an unbound socket.
+        Self::allow_ipv4_on_wildcard_v6(&socket, &addr)?;
+        // `TcpListener::bind` sets this for us; a hand-rolled socket does not, and
+        // without it a restart races its own lingering sockets.
+        #[cfg(unix)]
+        socket
+            .set_reuse_address(true)
+            .context("failed to set SO_REUSEADDR")?;
+        socket
+            .bind(&addr.into())
+            .with_context(|| format!("failed to bind to {addr}"))?;
+        socket
+            .listen(1024)
+            .context("failed to listen on the TCP socket")?;
+
+        Ok(socket.into())
+    }
+
     #[cfg(unix)]
     fn bind_reuseport(addr: &std::net::SocketAddr, count: usize) -> Result<Vec<StdUdpSocket>> {
         let domain = if addr.is_ipv4() {
@@ -47,6 +115,8 @@ impl SocketFactory {
                 .set_reuse_port(true)
                 .context("failed to set SO_REUSEPORT")?;
             socket.set_nonblocking(true)?;
+            // Before bind: the flag is only settable on an unbound socket.
+            Self::allow_ipv4_on_wildcard_v6(&socket, addr)?;
             socket
                 .bind(&(*addr).into())
                 .with_context(|| format!("failed to bind to {addr}"))?;
@@ -74,6 +144,10 @@ impl SocketFactory {
         let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
             .context("failed to create UDP socket")?;
         socket.set_nonblocking(true)?;
+        // Before bind: the flag is only settable on an unbound socket. Windows
+        // defaults it to enabled, so without this a `[::]` listener refuses every
+        // IPv4 client.
+        Self::allow_ipv4_on_wildcard_v6(&socket, addr)?;
         socket
             .bind(&(*addr).into())
             .with_context(|| format!("failed to bind to {addr}"))?;

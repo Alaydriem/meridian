@@ -9,8 +9,8 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
-use meridian::config::ConfigParser;
 use meridian::MeridianBuilder;
+use meridian::config::ConfigParser;
 
 use common::{free_port, generate_test_certs};
 
@@ -133,8 +133,7 @@ async fn test_tcp_passthrough_routes_by_sni() -> Result<()> {
     let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
     let server_name = rustls::pki_types::ServerName::try_from(hostname.to_string())?;
 
-    let tcp_stream =
-        tokio::net::TcpStream::connect(format!("127.0.0.1:{proxy_port}")).await?;
+    let tcp_stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{proxy_port}")).await?;
     let mut tls_stream = connector.connect(server_name, tcp_stream).await?;
 
     // Send HTTP request
@@ -203,8 +202,7 @@ async fn test_tcp_unknown_sni_rejected() -> Result<()> {
     let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
     let server_name = rustls::pki_types::ServerName::try_from("unknown.example.com".to_string())?;
 
-    let tcp_stream =
-        tokio::net::TcpStream::connect(format!("127.0.0.1:{proxy_port}")).await?;
+    let tcp_stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{proxy_port}")).await?;
 
     // The TLS handshake should fail because Meridian will close the connection
     let result = connector.connect(server_name, tcp_stream).await;

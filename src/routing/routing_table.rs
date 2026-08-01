@@ -79,8 +79,7 @@ impl RoutingTable {
             .iter()
             .find(|r| {
                 r.value().instance_id == backend.instance_id
-                    && Self::index_key(&r.value().hostname)
-                        != Self::index_key(&backend.hostname)
+                    && Self::index_key(&r.value().hostname) != Self::index_key(&backend.hostname)
             })
             .map(|r| (r.key().clone(), r.value().hostname.clone()));
 
@@ -210,9 +209,7 @@ impl RoutingTable {
         let expired: Vec<String> = self
             .by_name
             .iter()
-            .filter(|r| {
-                r.value().leased && now.duration_since(r.value().registered_at) >= ttl
-            })
+            .filter(|r| r.value().leased && now.duration_since(r.value().registered_at) >= ttl)
             .map(|r| r.key().clone())
             .collect();
 
@@ -221,21 +218,14 @@ impl RoutingTable {
         }
 
         if !expired.is_empty() {
-            tracing::info!(
-                count = expired.len(),
-                "reaped backends whose lease lapsed"
-            );
+            tracing::info!(count = expired.len(), "reaped backends whose lease lapsed");
         }
 
         expired.len()
     }
 
     /// Spawn a background task that reaps lapsed leases.
-    pub fn spawn_lease_reaper(
-        self: &Arc<Self>,
-        ttl: Duration,
-        shutdown: CancellationToken,
-    ) {
+    pub fn spawn_lease_reaper(self: &Arc<Self>, ttl: Duration, shutdown: CancellationToken) {
         let table = self.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(ttl / 3);
@@ -258,8 +248,12 @@ mod tests {
     fn test_backend(hostname: &str, instance_id: u16) -> Backend {
         Backend::new(
             hostname.to_string(),
-            format!("127.0.0.1:{}", 10000 + instance_id).parse().unwrap(),
-            format!("127.0.0.1:{}", 20000 + instance_id).parse().unwrap(),
+            format!("127.0.0.1:{}", 10000 + instance_id)
+                .parse()
+                .unwrap(),
+            format!("127.0.0.1:{}", 20000 + instance_id)
+                .parse()
+                .unwrap(),
             instance_id,
         )
     }
@@ -478,7 +472,10 @@ mod tests {
 
         // A different hostname claiming the same instance_id.
         let rejected = table.try_add_backend("b".to_string(), test_backend("b.example.com", 5));
-        assert!(rejected.is_err(), "a conflicting instance_id must be refused");
+        assert!(
+            rejected.is_err(),
+            "a conflicting instance_id must be refused"
+        );
 
         // The incumbent is untouched.
         assert_eq!(

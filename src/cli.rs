@@ -125,7 +125,9 @@ impl CliRunner {
 
     fn build_client_from_config(config: &MeridianConfig, insecure: bool) -> Result<MeridianClient> {
         let api = config.api.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("no 'api' block in config -- CLI commands require the API to be configured")
+            anyhow::anyhow!(
+                "no 'api' block in config -- CLI commands require the API to be configured"
+            )
         })?;
 
         let base_url = Self::api_base_url(&api.listen);
@@ -299,7 +301,10 @@ mod tests {
     #[test]
     fn test_health_subcommand() {
         let cli = Cli::try_parse_from(["meridian", "health"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Health { datapath: false })));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Health { datapath: false })
+        ));
     }
 
     #[test]

@@ -2,8 +2,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::api_config::ApiConfig;
-use super::gossip_config::GossipConfig;
 use super::backend_config::BackendConfig;
+use super::gossip_config::GossipConfig;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeridianConfig {

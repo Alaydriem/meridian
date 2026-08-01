@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::routing::RoutingTable;
 use crate::tls::TlsAlert;
+use crate::udp::SocketFactory;
 
 /// Deadline for reading a complete ClientHello.
 ///
@@ -63,7 +64,10 @@ impl TcpRouter {
     }
 
     pub async fn run(&self, shutdown: CancellationToken) -> Result<()> {
-        let listener = TcpListener::bind(&self.listen_addr).await?;
+        // Bound through SocketFactory rather than `TcpListener::bind` so a wildcard IPv6
+        // listen address means the same thing here as it does for QUIC. Both routers are
+        // handed the same `config.listen`.
+        let listener = TcpListener::from_std(SocketFactory::bind_tcp_listener(&self.listen_addr)?)?;
         tracing::info!(addr = %self.listen_addr, "tcp router listening");
 
         loop {
@@ -126,28 +130,24 @@ impl TcpRouter {
             )));
         };
 
-        let mut backend_stream = match timeout(
-            DIAL_TIMEOUT,
-            TcpStream::connect(backend.tcp_addr),
-        )
-        .await
-        {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
-                Self::reject(&mut stream, &TlsAlert::INTERNAL_ERROR).await;
-                return Err(RejectReason::Server(anyhow::anyhow!(
-                    "dial backend {} for '{sni}': {e}",
-                    backend.tcp_addr
-                )));
-            }
-            Err(_) => {
-                Self::reject(&mut stream, &TlsAlert::INTERNAL_ERROR).await;
-                return Err(RejectReason::Server(anyhow::anyhow!(
-                    "dial backend {} for '{sni}' timed out after {DIAL_TIMEOUT:?}",
-                    backend.tcp_addr
-                )));
-            }
-        };
+        let mut backend_stream =
+            match timeout(DIAL_TIMEOUT, TcpStream::connect(backend.tcp_addr)).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    Self::reject(&mut stream, &TlsAlert::INTERNAL_ERROR).await;
+                    return Err(RejectReason::Server(anyhow::anyhow!(
+                        "dial backend {} for '{sni}': {e}",
+                        backend.tcp_addr
+                    )));
+                }
+                Err(_) => {
+                    Self::reject(&mut stream, &TlsAlert::INTERNAL_ERROR).await;
+                    return Err(RejectReason::Server(anyhow::anyhow!(
+                        "dial backend {} for '{sni}' timed out after {DIAL_TIMEOUT:?}",
+                        backend.tcp_addr
+                    )));
+                }
+            };
 
         // Replay the handshake bytes we consumed, then get out of the way.
         if let Err(e) = backend_stream.write_all(&hello.bytes).await {
@@ -187,7 +187,10 @@ impl TcpRouter {
         loop {
             let n = stream.read(&mut chunk).await?;
             if n == 0 {
-                anyhow::bail!("connection closed after {} bytes, before a complete ClientHello", bytes.len());
+                anyhow::bail!(
+                    "connection closed after {} bytes, before a complete ClientHello",
+                    bytes.len()
+                );
             }
 
             bytes.extend_from_slice(&chunk[..n]);
