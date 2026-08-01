@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use io_uring::IoUring;
 use io_uring::cqueue;
 use io_uring::opcode;
 use io_uring::types;
-use io_uring::IoUring;
 use tokio_util::sync::CancellationToken;
 
 use crate::routing::RoutingTable;
@@ -155,7 +155,10 @@ impl RingWorker {
 
                         // Check if multishot was cancelled (no MORE flag).
                         if cqe.result() >= 0 && !cqueue::more(cqe.flags()) {
-                            tracing::debug!(worker = worker_id, "multishot recv ended, resubmitting");
+                            tracing::debug!(
+                                worker = worker_id,
+                                "multishot recv ended, resubmitting"
+                            );
                             if let Err(e) = Self::submit_recv_msg_multi(&mut ring, &main_msghdr) {
                                 tracing::error!(worker = worker_id, error = %e, "failed to resubmit multishot recv");
                             }
@@ -219,12 +222,13 @@ impl RingWorker {
                     }
                     // Unregister the fixed file slot.
                     fixed_files[fixed_index as usize] = -1;
-                    let _ = ring.submitter().register_files_update(
-                        fixed_index,
-                        &[-1i32],
-                    );
+                    let _ = ring
+                        .submitter()
+                        .register_files_update(fixed_index, &[-1i32]);
                     // Close the raw fd.
-                    unsafe { libc::close(raw_fd); }
+                    unsafe {
+                        libc::close(raw_fd);
+                    }
                     tracing::debug!(worker = worker_id, fixed_index, "expired ephemeral socket");
                 }
                 conn_table.retain(|_, state| {
@@ -247,7 +251,9 @@ impl RingWorker {
             if let Some(buf_id) = recv_buf {
                 recv_pool.free(buf_id);
             }
-            unsafe { libc::close(raw_fd); }
+            unsafe {
+                libc::close(raw_fd);
+            }
         }
 
         // Ring is dropped here, which cancels in-flight ops.
@@ -273,9 +279,7 @@ impl RingWorker {
                     i as u16,
                 )
                 .build()
-                .user_data(
-                    UserDataTag::new(OpType::ProvideBuffer, 0, i as u32).encode(),
-                );
+                .user_data(UserDataTag::new(OpType::ProvideBuffer, 0, i as u32).encode());
 
                 unsafe { ring.submission().push(&entry)? };
             }
@@ -300,9 +304,7 @@ impl RingWorker {
             RECV_BUF_GROUP,
         )
         .build()
-        .user_data(
-            UserDataTag::new(OpType::MainRecvMulti, 0, 0).encode(),
-        );
+        .user_data(UserDataTag::new(OpType::MainRecvMulti, 0, 0).encode());
 
         unsafe { ring.submission().push(&entry)? };
         Ok(())
@@ -378,7 +380,9 @@ impl RingWorker {
             crypto_buf,
             cid_prefix_length,
             |addr| conn_table.get(addr).cloned(),
-            |addr, state| { pending_insert.set(Some((addr, state))); },
+            |addr, state| {
+                pending_insert.set(Some((addr, state)));
+            },
         ) {
             Ok(addr) => {
                 // Apply any deferred insert.
@@ -417,9 +421,19 @@ impl RingWorker {
                 // Fast path: through our own ring, against the registered fixed file.
                 if let Some(send_buf_id) = send_pool.alloc() {
                     let n = send_pool.copy_into(send_buf_id, payload);
-                    Self::queue_send_on_fd(ring, fixed_index, send_pool, send_buf_id, n, OpType::EphSend);
+                    Self::queue_send_on_fd(
+                        ring,
+                        fixed_index,
+                        send_pool,
+                        send_buf_id,
+                        n,
+                        OpType::EphSend,
+                    );
                 } else {
-                    tracing::debug!(worker = worker_id, "send buffer pool exhausted, dropping packet");
+                    tracing::debug!(
+                        worker = worker_id,
+                        "send buffer pool exhausted, dropping packet"
+                    );
                 }
             }
             EphTarget::Foreign { raw_fd, id } => {
@@ -470,7 +484,14 @@ impl RingWorker {
                 error = %err, "ephemeral recv error"
             );
             // Re-submit recv on this ephemeral socket.
-            Self::resubmit_eph_recv(ring, recv_pool, eph_table, local_by_fixed_index, fixed_index, recv_buf_id);
+            Self::resubmit_eph_recv(
+                ring,
+                recv_pool,
+                eph_table,
+                local_by_fixed_index,
+                fixed_index,
+                recv_buf_id,
+            );
             return;
         }
 
@@ -507,7 +528,14 @@ impl RingWorker {
         }
 
         // Re-submit recv on this ephemeral socket.
-        Self::resubmit_eph_recv(ring, recv_pool, eph_table, local_by_fixed_index, fixed_index, recv_buf_id);
+        Self::resubmit_eph_recv(
+            ring,
+            recv_pool,
+            eph_table,
+            local_by_fixed_index,
+            fixed_index,
+            recv_buf_id,
+        );
     }
 
     /// The datagram's Destination Connection ID, for ephemeral-socket indexing.
@@ -581,7 +609,11 @@ impl RingWorker {
         };
 
         let raw_fd = unsafe {
-            libc::socket(domain, libc::SOCK_DGRAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC, 0)
+            libc::socket(
+                domain,
+                libc::SOCK_DGRAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+                0,
+            )
         };
         if raw_fd < 0 {
             tracing::debug!(worker = worker_id, "failed to create ephemeral socket");
@@ -597,7 +629,9 @@ impl RingWorker {
                 worker = worker_id, %backend_addr,
                 error = %err, "ephemeral connect failed"
             );
-            unsafe { libc::close(raw_fd); }
+            unsafe {
+                libc::close(raw_fd);
+            }
             return None;
         }
 
@@ -612,7 +646,9 @@ impl RingWorker {
             let _ = ring.submitter().unregister_files();
             if ring.submitter().register_files(fixed_files).is_err() {
                 tracing::error!(worker = worker_id, "failed to grow fixed file table");
-                unsafe { libc::close(raw_fd); }
+                unsafe {
+                    libc::close(raw_fd);
+                }
                 return None;
             }
         }
@@ -624,7 +660,9 @@ impl RingWorker {
             .is_err()
         {
             tracing::debug!(worker = worker_id, "failed to register ephemeral fd");
-            unsafe { libc::close(raw_fd); }
+            unsafe {
+                libc::close(raw_fd);
+            }
             return None;
         }
 
@@ -653,22 +691,11 @@ impl RingWorker {
     }
 
     /// Submit a single-shot recv on an ephemeral socket.
-    fn submit_eph_recv(
-        ring: &mut Ring,
-        pool: &mut BufferPool,
-        fixed_index: u32,
-        buf_id: u16,
-    ) {
+    fn submit_eph_recv(ring: &mut Ring, pool: &mut BufferPool, fixed_index: u32, buf_id: u16) {
         let ptr = pool.ptr_mut(buf_id);
-        let entry = opcode::Recv::new(
-            types::Fixed(fixed_index),
-            ptr,
-            pool.buffer_size() as u32,
-        )
-        .build()
-        .user_data(
-            UserDataTag::new(OpType::EphRecv, fixed_index, buf_id as u32).encode(),
-        );
+        let entry = opcode::Recv::new(types::Fixed(fixed_index), ptr, pool.buffer_size() as u32)
+            .build()
+            .user_data(UserDataTag::new(OpType::EphRecv, fixed_index, buf_id as u32).encode());
 
         let _ = unsafe { ring.submission().push(&entry) };
     }
@@ -701,15 +728,9 @@ impl RingWorker {
         op_type: OpType,
     ) {
         let ptr = pool.ptr(buf_id);
-        let entry = opcode::Send::new(
-            types::Fixed(fixed_index),
-            ptr,
-            len as u32,
-        )
-        .build()
-        .user_data(
-            UserDataTag::new(op_type, fixed_index, buf_id as u32).encode(),
-        );
+        let entry = opcode::Send::new(types::Fixed(fixed_index), ptr, len as u32)
+            .build()
+            .user_data(UserDataTag::new(op_type, fixed_index, buf_id as u32).encode());
 
         let _ = unsafe { ring.submission().push(&entry) };
     }
@@ -744,7 +765,8 @@ impl RingWorker {
 
         // Wire up the msghdr to point into our heap-allocated state.
         unsafe {
-            (*state).msg.msg_name = &mut (*state).addr as *mut libc::sockaddr_storage as *mut libc::c_void;
+            (*state).msg.msg_name =
+                &mut (*state).addr as *mut libc::sockaddr_storage as *mut libc::c_void;
             (*state).msg.msg_namelen = addr_len;
             (*state).msg.msg_iov = &mut (*state).iov as *mut libc::iovec;
             (*state).msg.msg_iovlen = 1;
@@ -755,9 +777,7 @@ impl RingWorker {
             unsafe { &(*state).msg as *const libc::msghdr },
         )
         .build()
-        .user_data(
-            UserDataTag::new(OpType::MainSend, 0, buf_id as u32).encode(),
-        );
+        .user_data(UserDataTag::new(OpType::MainSend, 0, buf_id as u32).encode());
 
         let _ = unsafe { ring.submission().push(&entry) };
 
@@ -771,17 +791,10 @@ impl RingWorker {
     /// Replenish a single buffer back to the kernel's provided buffer pool.
     fn replenish_buffer(ring: &mut Ring, pool: &mut BufferPool, buf_id: u16) {
         let ptr = pool.ptr_mut(buf_id);
-        let entry = opcode::ProvideBuffers::new(
-            ptr,
-            pool.buffer_size() as i32,
-            1,
-            RECV_BUF_GROUP,
-            buf_id,
-        )
-        .build()
-        .user_data(
-            UserDataTag::new(OpType::ProvideBuffer, 0, buf_id as u32).encode(),
-        );
+        let entry =
+            opcode::ProvideBuffers::new(ptr, pool.buffer_size() as i32, 1, RECV_BUF_GROUP, buf_id)
+                .build()
+                .user_data(UserDataTag::new(OpType::ProvideBuffer, 0, buf_id as u32).encode());
 
         let _ = unsafe { ring.submission().push(&entry) };
     }
@@ -791,14 +804,13 @@ impl RingWorker {
         if data.len() >= std::mem::size_of::<libc::sockaddr_in>() {
             let family = u16::from_ne_bytes([data[0], data[1]]) as i32;
             if family == libc::AF_INET && data.len() >= std::mem::size_of::<libc::sockaddr_in>() {
-                let sa: &libc::sockaddr_in = unsafe { &*(data.as_ptr() as *const libc::sockaddr_in) };
+                let sa: &libc::sockaddr_in =
+                    unsafe { &*(data.as_ptr() as *const libc::sockaddr_in) };
                 let ip = std::net::Ipv4Addr::from(u32::from_be(sa.sin_addr.s_addr));
                 let port = u16::from_be(sa.sin_port);
                 return Some(SocketAddr::from((ip, port)));
             }
-            if family == libc::AF_INET6
-                && data.len() >= std::mem::size_of::<libc::sockaddr_in6>()
-            {
+            if family == libc::AF_INET6 && data.len() >= std::mem::size_of::<libc::sockaddr_in6>() {
                 let sa: &libc::sockaddr_in6 =
                     unsafe { &*(data.as_ptr() as *const libc::sockaddr_in6) };
                 let ip = std::net::Ipv6Addr::from(sa.sin6_addr.s6_addr);
@@ -887,7 +899,6 @@ impl RingWorker {
     }
 }
 
-
 /// How a resolved ephemeral socket should be written to.
 enum EphTarget {
     /// We own it: submit through our ring against the fixed-file index.
@@ -898,7 +909,6 @@ enum EphTarget {
     Foreign { raw_fd: i32, id: SocketId },
 }
 
-
 /// State for an in-flight SendMsg operation.
 #[repr(C)]
 struct SendMsgState {
@@ -906,5 +916,3 @@ struct SendMsgState {
     addr: libc::sockaddr_storage,
     msg: libc::msghdr,
 }
-
-

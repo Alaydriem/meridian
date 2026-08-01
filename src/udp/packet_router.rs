@@ -104,7 +104,9 @@ impl PacketRouter {
                 // random value, unprefixed. That is acceptable because a 0-RTT packet
                 // is always preceded by an Initial from the same address.
                 let dcid = Self::long_header_dcid(datagram).ok_or_else(|| {
-                    anyhow::anyhow!("long header type {packet_type:02x} truncated from {client_addr}")
+                    anyhow::anyhow!(
+                        "long header type {packet_type:02x} truncated from {client_addr}"
+                    )
                 })?;
                 if dcid.len() < 2 {
                     anyhow::bail!(

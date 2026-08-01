@@ -77,11 +77,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn test_https(
-    proxy_addr: &str,
-    sni: &str,
-    ca_path: &std::path::Path,
-) -> Result<String> {
+async fn test_https(proxy_addr: &str, sni: &str, ca_path: &std::path::Path) -> Result<String> {
     let ca_pem = std::fs::read(ca_path)?;
 
     let mut root_store = rustls::RootCertStore::empty();
@@ -115,11 +111,7 @@ async fn test_https(
     }
 }
 
-async fn test_quic(
-    proxy_addr: &str,
-    sni: &str,
-    ca_path: &std::path::Path,
-) -> Result<String> {
+async fn test_quic(proxy_addr: &str, sni: &str, ca_path: &std::path::Path) -> Result<String> {
     let tls = s2n_quic::provider::tls::rustls::Client::builder()
         .with_certificate(ca_path)
         .map_err(|e| anyhow::anyhow!("tls cert error: {e}"))?

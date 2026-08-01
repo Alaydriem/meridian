@@ -26,19 +26,14 @@ impl Meridian {
     pub async fn run(&self, shutdown: CancellationToken) -> Result<()> {
         tracing::info!(listen = %self.config.listen, "meridian starting");
 
-        let tcp_router = TcpRouterBuilder::new(
-            self.routing_table.clone(),
-            self.config.listen.clone(),
-        )
-        .build();
+        let tcp_router =
+            TcpRouterBuilder::new(self.routing_table.clone(), self.config.listen.clone()).build();
 
         #[allow(unused_mut)]
-        let mut udp_builder = UdpRouterBuilder::new(
-            self.routing_table.clone(),
-            self.config.listen.clone(),
-        )
-        .cid_prefix_length(self.config.cid_prefix_length)
-        .workers(self.config.workers);
+        let mut udp_builder =
+            UdpRouterBuilder::new(self.routing_table.clone(), self.config.listen.clone())
+                .cid_prefix_length(self.config.cid_prefix_length)
+                .workers(self.config.workers);
 
         #[cfg(feature = "io-uring")]
         {

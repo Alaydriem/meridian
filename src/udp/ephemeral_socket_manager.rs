@@ -117,7 +117,8 @@ impl EphemeralSocketManager {
         // Publish the entry *before* claiming the address index, so that "id present
         // in by_client_addr" implies "entry present in sockets". The other order lets
         // a loser find the winner's id with no entry behind it.
-        let entry = EphemeralSocket::new(candidate.clone(), client_addr, cancel.clone(), self.epoch);
+        let entry =
+            EphemeralSocket::new(candidate.clone(), client_addr, cancel.clone(), self.epoch);
         let liveness = entry.liveness.clone();
         let target = entry.target.clone();
         self.sockets.insert(id, entry);
@@ -292,6 +293,15 @@ impl EphemeralSocketManager {
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.sockets.len()
+    }
+
+    /// Whether any ephemeral socket is live.
+    ///
+    /// Companion to [`Self::len`]. `clippy::len_without_is_empty` requires the pair on
+    /// a public type, and this type became public to give the tests a seam.
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.sockets.is_empty()
     }
 
     /// Size of the DCID index. Guards against an index leak across CID rotations.

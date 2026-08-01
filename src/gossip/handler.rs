@@ -60,7 +60,11 @@ impl RegistryBroadcast {
             .with_version(record.version);
 
         // Upsert, matching the control plane path.
-        if self.table.update_backend(&record.name, backend.clone()).is_none() {
+        if self
+            .table
+            .update_backend(&record.name, backend.clone())
+            .is_none()
+        {
             // Refused for the same reason as on the API: silently overwriting would
             // route one tenant's traffic into another's backend.
             if let Err(e) = self.table.try_add_backend(record.name.clone(), backend) {
@@ -150,7 +154,11 @@ mod tests {
             "returning Some for stale data would make Foca disseminate it forever"
         );
         assert_eq!(
-            table.lookup_by_hostname("x.example.com").unwrap().udp_addr.port(),
+            table
+                .lookup_by_hostname("x.example.com")
+                .unwrap()
+                .udp_addr
+                .port(),
             8443,
             "a stale record must not overwrite a newer one"
         );
@@ -186,7 +194,11 @@ mod tests {
 
         assert!(key.is_some());
         assert_eq!(
-            table.lookup_by_hostname("x.example.com").unwrap().udp_addr.port(),
+            table
+                .lookup_by_hostname("x.example.com")
+                .unwrap()
+                .udp_addr
+                .port(),
             9443,
             "a backend that moved must be followed"
         );

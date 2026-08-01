@@ -155,7 +155,10 @@ mod tests {
             version: RecordVersion::new(u64::MAX, u64::MAX),
         };
         let len = r.encode().unwrap().len();
-        assert!(len < 512, "record must fit a gossip datagram, got {len} bytes");
+        assert!(
+            len < 512,
+            "record must fit a gossip datagram, got {len} bytes"
+        );
     }
 
     #[test]

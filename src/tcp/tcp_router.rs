@@ -130,28 +130,24 @@ impl TcpRouter {
             )));
         };
 
-        let mut backend_stream = match timeout(
-            DIAL_TIMEOUT,
-            TcpStream::connect(backend.tcp_addr),
-        )
-        .await
-        {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
-                Self::reject(&mut stream, &TlsAlert::INTERNAL_ERROR).await;
-                return Err(RejectReason::Server(anyhow::anyhow!(
-                    "dial backend {} for '{sni}': {e}",
-                    backend.tcp_addr
-                )));
-            }
-            Err(_) => {
-                Self::reject(&mut stream, &TlsAlert::INTERNAL_ERROR).await;
-                return Err(RejectReason::Server(anyhow::anyhow!(
-                    "dial backend {} for '{sni}' timed out after {DIAL_TIMEOUT:?}",
-                    backend.tcp_addr
-                )));
-            }
-        };
+        let mut backend_stream =
+            match timeout(DIAL_TIMEOUT, TcpStream::connect(backend.tcp_addr)).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    Self::reject(&mut stream, &TlsAlert::INTERNAL_ERROR).await;
+                    return Err(RejectReason::Server(anyhow::anyhow!(
+                        "dial backend {} for '{sni}': {e}",
+                        backend.tcp_addr
+                    )));
+                }
+                Err(_) => {
+                    Self::reject(&mut stream, &TlsAlert::INTERNAL_ERROR).await;
+                    return Err(RejectReason::Server(anyhow::anyhow!(
+                        "dial backend {} for '{sni}' timed out after {DIAL_TIMEOUT:?}",
+                        backend.tcp_addr
+                    )));
+                }
+            };
 
         // Replay the handshake bytes we consumed, then get out of the way.
         if let Err(e) = backend_stream.write_all(&hello.bytes).await {
@@ -191,7 +187,10 @@ impl TcpRouter {
         loop {
             let n = stream.read(&mut chunk).await?;
             if n == 0 {
-                anyhow::bail!("connection closed after {} bytes, before a complete ClientHello", bytes.len());
+                anyhow::bail!(
+                    "connection closed after {} bytes, before a complete ClientHello",
+                    bytes.len()
+                );
             }
 
             bytes.extend_from_slice(&chunk[..n]);

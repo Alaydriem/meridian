@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 pub struct AddressResolver;
 
@@ -28,7 +28,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_ip_addr() {
-        let addr = AddressResolver::resolve_addr("127.0.0.1:8080").await.unwrap();
+        let addr = AddressResolver::resolve_addr("127.0.0.1:8080")
+            .await
+            .unwrap();
         assert_eq!(addr, "127.0.0.1:8080".parse::<SocketAddr>().unwrap());
     }
 
@@ -40,7 +42,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_localhost() {
-        let addr = AddressResolver::resolve_addr("localhost:9999").await.unwrap();
+        let addr = AddressResolver::resolve_addr("localhost:9999")
+            .await
+            .unwrap();
         assert_eq!(addr.port(), 9999);
         assert!(addr.ip().is_loopback());
     }

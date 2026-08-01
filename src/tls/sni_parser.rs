@@ -112,11 +112,7 @@ impl SniParser {
 
     fn checked_add(pos: usize, add: usize, limit: usize) -> Option<usize> {
         let result = pos.checked_add(add)?;
-        if result > limit {
-            None
-        } else {
-            Some(result)
-        }
+        if result > limit { None } else { Some(result) }
     }
 }
 

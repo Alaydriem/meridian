@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 
 use crate::api::dto::{
-    BackendListResponse, BackendResponse, CreateBackendRequest, ErrorResponse,
-    UpdateBackendRequest, DatapathHealthResponse,
+    BackendListResponse, BackendResponse, CreateBackendRequest, DatapathHealthResponse,
+    ErrorResponse, UpdateBackendRequest,
 };
 
 pub struct MeridianClient {

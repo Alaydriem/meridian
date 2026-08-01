@@ -11,9 +11,7 @@ use meridian::routing::{Backend, RoutingTable};
 
 use common::generate_test_certs;
 
-fn setup_control_plane(
-    certs: &common::TestCerts,
-) -> Result<(u16, String, String, String)> {
+fn setup_control_plane(certs: &common::TestCerts) -> Result<(u16, String, String, String)> {
     // Write certs to a unique temp dir per invocation
     let temp_dir = std::env::temp_dir().join(format!(
         "meridian-test-{}-{}",

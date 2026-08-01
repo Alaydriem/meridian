@@ -1,15 +1,15 @@
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use clap::Parser;
 use dashmap::DashMap;
+use s2n_quic::Server;
 use s2n_quic::connection::Handle;
 use s2n_quic::provider::connection_id;
-use s2n_quic::provider::event::{events, ConnectionInfo, ConnectionMeta, Subscriber};
-use s2n_quic::Server;
+use s2n_quic::provider::event::{ConnectionInfo, ConnectionMeta, Subscriber, events};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
@@ -285,12 +285,11 @@ async fn main() -> Result<()> {
                 let handle = conn_handle.clone();
                 let conns = connections.clone();
                 tokio::spawn(async move {
-                    use s2n_quic::provider::datagram::default::{Sender, Receiver};
+                    use s2n_quic::provider::datagram::default::{Receiver, Sender};
                     let id_bytes = instance_id.to_be_bytes();
                     loop {
-                        let datagram = handle.datagram_mut(|recv: &mut Receiver| {
-                            recv.recv_datagram()
-                        });
+                        let datagram =
+                            handle.datagram_mut(|recv: &mut Receiver| recv.recv_datagram());
 
                         match datagram {
                             Ok(Some(data)) => {
@@ -303,9 +302,10 @@ async fn main() -> Result<()> {
                                 // Fan out to all OTHER connected clients
                                 for entry in conns.iter() {
                                     if *entry.key() != conn_id {
-                                        let _ = entry.value().datagram_mut(|sender: &mut Sender| {
-                                            sender.send_datagram_forced(payload.clone())
-                                        });
+                                        let _ =
+                                            entry.value().datagram_mut(|sender: &mut Sender| {
+                                                sender.send_datagram_forced(payload.clone())
+                                            });
                                     }
                                 }
                             }
@@ -331,25 +331,41 @@ async fn main() -> Result<()> {
                                 let (mut recv, mut send) = stream.split();
                                 let mut header = [0u8; 4];
 
-                                match tokio::io::AsyncReadExt::read_exact(&mut recv, &mut header).await {
+                                match tokio::io::AsyncReadExt::read_exact(&mut recv, &mut header)
+                                    .await
+                                {
                                     Ok(_) => {
                                         let len = u32::from_be_bytes(header) as usize;
                                         if len > 0 && len <= 65535 {
                                             if let Err(e) = handle_framed_stream(
-                                                &mut recv, &mut send, instance_id, len,
-                                            ).await {
+                                                &mut recv,
+                                                &mut send,
+                                                instance_id,
+                                                len,
+                                            )
+                                            .await
+                                            {
                                                 tracing::debug!(%peer, error = %e, "framed stream ended");
                                             }
                                         } else {
                                             let mut buf = vec![0u8; 4096];
                                             buf[..4].copy_from_slice(&header);
-                                            let n = match tokio::io::AsyncReadExt::read(&mut recv, &mut buf[4..]).await {
+                                            let n = match tokio::io::AsyncReadExt::read(
+                                                &mut recv,
+                                                &mut buf[4..],
+                                            )
+                                            .await
+                                            {
                                                 Ok(n) => 4 + n,
                                                 Err(_) => 4,
                                             };
                                             let received = String::from_utf8_lossy(&buf[..n]);
                                             let response = format!("{instance_id}:{received}");
-                                            let _ = tokio::io::AsyncWriteExt::write_all(&mut send, response.as_bytes()).await;
+                                            let _ = tokio::io::AsyncWriteExt::write_all(
+                                                &mut send,
+                                                response.as_bytes(),
+                                            )
+                                            .await;
                                             let _ = send.close().await;
                                         }
                                     }
@@ -417,11 +433,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn build_tls_acceptor(
-    cert_path: &Path,
-    key_path: &Path,
-    ca_path: &Path,
-) -> Result<TlsAcceptor> {
+fn build_tls_acceptor(cert_path: &Path, key_path: &Path, ca_path: &Path) -> Result<TlsAcceptor> {
     let cert_pem = std::fs::read(cert_path)?;
     let key_pem = std::fs::read(key_path)?;
     let ca_pem = std::fs::read(ca_path)?;
@@ -483,6 +495,9 @@ async fn register_with_api(
         )
         .await?;
 
-    println!("registered with control plane as {} ({})", resp.name, resp.hostname);
+    println!(
+        "registered with control plane as {} ({})",
+        resp.name, resp.hostname
+    );
     Ok(())
 }

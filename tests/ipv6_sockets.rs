@@ -11,8 +11,7 @@
 //! a real connection.
 
 use std::net::{
-    IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream,
-    UdpSocket as StdUdpSocket,
+    IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream, UdpSocket as StdUdpSocket,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -215,9 +214,7 @@ fn a_wildcard_ipv6_tcp_listener_accepts_ipv4_connections() {
         .expect("block on a single accept");
     let port = listener.local_addr().expect("local addr").port();
 
-    let dialer = std::thread::spawn(move || {
-        StdTcpStream::connect((Ipv4Addr::LOCALHOST, port))
-    });
+    let dialer = std::thread::spawn(move || StdTcpStream::connect((Ipv4Addr::LOCALHOST, port)));
 
     let (_stream, from) = listener.accept().expect(
         "a wildcard IPv6 TCP listener must accept IPv4 connections; if this failed,          IPV6_V6ONLY is set and every IPv4 client is being refused",
@@ -239,9 +236,7 @@ fn a_wildcard_ipv6_tcp_listener_accepts_ipv6_connections() {
         .expect("block on a single accept");
     let port = listener.local_addr().expect("local addr").port();
 
-    let dialer = std::thread::spawn(move || {
-        StdTcpStream::connect((Ipv6Addr::LOCALHOST, port))
-    });
+    let dialer = std::thread::spawn(move || StdTcpStream::connect((Ipv6Addr::LOCALHOST, port)));
 
     listener
         .accept()
@@ -258,9 +253,7 @@ fn an_ipv4_tcp_listener_accepts_ipv4_connections() {
         .expect("block on a single accept");
     let port = listener.local_addr().expect("local addr").port();
 
-    let dialer = std::thread::spawn(move || {
-        StdTcpStream::connect((Ipv4Addr::LOCALHOST, port))
-    });
+    let dialer = std::thread::spawn(move || StdTcpStream::connect((Ipv4Addr::LOCALHOST, port)));
 
     let (_stream, from) = listener
         .accept()

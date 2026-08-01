@@ -207,7 +207,9 @@ impl EphemeralTable {
         let expired: Vec<SocketId> = self
             .sockets
             .iter()
-            .filter(|r| now.saturating_sub(r.value().last_activity_ms.load(Ordering::Relaxed)) >= ttl_ms)
+            .filter(|r| {
+                now.saturating_sub(r.value().last_activity_ms.load(Ordering::Relaxed)) >= ttl_ms
+            })
             .map(|r| *r.key())
             .collect();
 
@@ -486,11 +488,7 @@ mod tests {
         let id = insert(&table, 0, 1, make_addr(1000));
         table.retire_expired();
 
-        let refused = table
-            .closing
-            .get(&id)
-            .expect("pending")
-            .try_acquire_send();
+        let refused = table.closing.get(&id).expect("pending").try_acquire_send();
         assert!(
             !refused,
             "a dying socket must refuse new senders, or the count could never drain"

@@ -29,9 +29,8 @@ impl MeridianClientBuilder {
 
     /// Load a CA certificate from a file path.
     pub fn with_ca_cert_file(self, path: impl AsRef<Path>) -> Result<Self> {
-        let pem = std::fs::read(path.as_ref()).with_context(|| {
-            format!("failed to read CA cert: {}", path.as_ref().display())
-        })?;
+        let pem = std::fs::read(path.as_ref())
+            .with_context(|| format!("failed to read CA cert: {}", path.as_ref().display()))?;
         Ok(self.with_ca_cert_pem(pem))
     }
 
@@ -45,8 +44,8 @@ impl MeridianClientBuilder {
         let mut builder = reqwest::Client::builder();
 
         if let Some(pem) = &self.ca_cert_pem {
-            let cert = reqwest::tls::Certificate::from_pem(pem)
-                .context("invalid CA certificate PEM")?;
+            let cert =
+                reqwest::tls::Certificate::from_pem(pem).context("invalid CA certificate PEM")?;
             builder = builder.add_root_certificate(cert);
         }
 

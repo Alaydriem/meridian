@@ -154,7 +154,12 @@ impl UdpWorker {
         shutdown: CancellationToken,
     ) -> Result<()> {
         let eph = eph_manager
-            .get_or_create(client_addr, Self::datagram_dcid(datagram), backend_addr, shutdown)
+            .get_or_create(
+                client_addr,
+                Self::datagram_dcid(datagram),
+                backend_addr,
+                shutdown,
+            )
             .await?;
         eph.send(datagram).await?;
         Ok(())
